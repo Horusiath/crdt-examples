@@ -5,12 +5,12 @@ namespace Crdt
 
 #load "../../common.fsx"
 
+type GSet<'a when 'a: comparison> = GSet of values:Set<'a> * delta:GSet<'a> option
+
 /// A delta-state based implementation of immutable grow-only set.
 [<RequireQualifiedAccess>]
 module GSet =
 
-    type GSet<'a when 'a: comparison> = GSet of values:Set<'a> * delta:GSet<'a> option
-    
     /// Returns a default, empty instance of G-Set.
     let zero = GSet(Set.empty, None)
 

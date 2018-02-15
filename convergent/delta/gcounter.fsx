@@ -5,13 +5,11 @@ namespace Crdt
 
 #load "../../common.fsx"
 
-open System
+type GCounter = GCounter of values:Map<ReplicaId, int64> * delta:GCounter option
 
 /// A delta-state implementation of immutable grow-only counter
 [<RequireQualifiedAccess>]
 module GCounter =
-    
-    type GCounter = GCounter of values:Map<ReplicaId, int64> * delta:GCounter option
     
     /// Creates an empty G-Counter.
     let zero = GCounter(Map.empty, None)

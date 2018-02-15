@@ -5,12 +5,12 @@ namespace Crdt
 
 #load "gcounter.fsx"
 
+type PNCounter = PNCounter of inc:GCounter * dec:GCounter
+
 /// A delta-state based implementation of immutable increment/decrement counter.
 [<RequireQualifiedAccess>]
 module PNCounter =
 
-    type PNCounter = PNCounter of inc:GCounter.GCounter * dec:GCounter.GCounter
-    
     /// Creates an empty PN-Counter.
     let zero = PNCounter(GCounter.zero, GCounter.zero)
     

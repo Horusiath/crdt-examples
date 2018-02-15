@@ -31,10 +31,11 @@ module Helpers =
         | None, Some y   -> Some y
         | None, None     -> None
    
+type VTime = Map<ReplicaId, int64>
+
 [<RequireQualifiedAccess>]     
 module Version =  
-    type VTime = Map<ReplicaId, int64>
-    let empty: VTime = Map.empty
+    let zero: VTime = Map.empty
     let inc r (vv: VTime) = vv |> Helpers.upsert r 1L ((+)1L)
     let merge vv1 vv2 =
         vv2 |> Map.fold (fun acc k v2 -> Helpers.upsert k v2 (max v2) acc) vv1
