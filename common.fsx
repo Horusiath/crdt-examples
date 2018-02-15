@@ -30,6 +30,11 @@ module Helpers =
         | Some x, None   -> Some x
         | None, Some y   -> Some y
         | None, None     -> None
+
+    let getOrElse k v map = 
+        match Map.tryFind k map with
+        | None -> v
+        | Some v -> v
    
 type VTime = Map<ReplicaId, int64>
 
