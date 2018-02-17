@@ -20,4 +20,19 @@ module PSetTests =
         value = Set.singleton "b"
 
     let ``2-Phase set should merge in both directions`` () =
-        failwith "not implemented"
+        let init = 
+            PSet.zero
+            |> PSet.add "a"
+            |> PSet.add "b"
+        let a = 
+            init
+            |> PSet.add "c"
+            |> PSet.rem "a"
+        let b =
+            init
+            |> PSet.rem "c"
+            |> PSet.add "d"
+        let ab = PSet.merge a b
+        let ba = PSet.merge b a
+        ab = ba &&
+        PSet.value ab = PSet.value ba

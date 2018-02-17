@@ -10,10 +10,10 @@ module GCounterTests =
     let ``GCounter should inc value per node`` () =
         let (GCounter(v)) = 
             GCounter.zero
-            |> GCounter.inc "A"
-            |> GCounter.inc "B"
-            |> GCounter.inc "A"
-            |> GCounter.inc "C"
+            |> GCounter.inc "A"     // {A:1}
+            |> GCounter.inc "B"     // {A:1,B:1}
+            |> GCounter.inc "A"     // {A:2,B:1}
+            |> GCounter.inc "C"     // {A:2,B:1,C:1}
         v.["A"] = 2L && 
         v.["B"] = 1L && 
         v.["C"] = 1L

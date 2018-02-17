@@ -27,7 +27,7 @@ module AWORSet =
         | _, Some v -> AWORSet(Map.add e (Version.inc r v) add, Map.remove e rem)
         | _, _ -> AWORSet(Map.add e (Version.inc r Version.zero) add, rem)
 
-    let remove r e (AWORSet(add, rem)) =
+    let rem r e (AWORSet(add, rem)) =
         match Map.tryFind e add, Map.tryFind e rem with
         | Some v, _ -> AWORSet(Map.remove e add, Map.add e (Version.inc r v) rem)
         | _, Some v -> AWORSet(Map.remove e add, Map.add e (Version.inc r v) rem)
