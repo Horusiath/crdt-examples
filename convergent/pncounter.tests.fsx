@@ -1,11 +1,11 @@
 /// The MIT License (MIT)
 /// Copyright (c) 2018 Bartosz Sypytkowski
 
-namespace Crdt
-
 #load "pncounter.fsx"
 
 module PNCounterTests = 
+
+    open Crdt
 
     let ``PNCounter should inc and dec value per node`` () =
         let value = 
@@ -31,3 +31,8 @@ module PNCounterTests =
 
         gAB = gBA && 
         PNCounter.value gAB = PNCounter.value gBA
+
+open PNCounterTests
+
+printfn "[TEST] PNCounter should inc and dec value per node: %b" <| ``PNCounter should inc and dec value per node``()
+printfn "[TEST] PNCounter should merge in both directions: %b" <| ``PNCounter should merge in both directions``()

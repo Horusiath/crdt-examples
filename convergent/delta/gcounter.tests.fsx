@@ -8,7 +8,7 @@ module GCounterTests =
     open Crdt
 
     let ``GCounter should inc value per node`` () =
-        let (GCounter(v)) = 
+        let (GCounter(v, _)) = 
             GCounter.zero
             |> GCounter.inc "A"     // {A:1}
             |> GCounter.inc "B"     // {A:1,B:1}
@@ -40,9 +40,23 @@ module GCounterTests =
 
         gAB = gBA && 
         GCounter.value gAB = GCounter.value gBA
+        
+    let ``GCounter should merge deltas`` () =
+        let init = GCounter.inc "A" GCounter.zero
+        let a = 
+            init
+            |> GCounter.inc "A"
+            |> GCounter.inc "A"            
+        let b = GCounter.inc "B" init
+        let ab = GCounter.merge a b
+        let (_, Some(d)) = GCounter.split a
+        let bd = GCounter.mergeDelta b d
+        
+        GCounter.value ab = GCounter.value bd
 
 open GCounterTests
 
 printfn "[TEST] GCounter should inc value per node: %b" <| ``GCounter should inc value per node``()
 printfn "[TEST] GCounter should return a cumulative value: %b" <| ``GCounter should return a cumulative value``()
 printfn "[TEST] GCounter should merge in both directions: %b" <| ``GCounter should merge in both directions``()
+printfn "[TEST] GCounter should merge deltass: %b" <| ``GCounter should merge deltas``()

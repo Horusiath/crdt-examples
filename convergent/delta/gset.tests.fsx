@@ -32,7 +32,24 @@ module GSetTests =
         ab = ba &&
         GSet.value ab = GSet.value ba
 
+    let ``Get should merge deltas`` () =
+        let init = GSet.add "x" GSet.zero
+        let a = 
+            init
+            |> GSet.add "y"
+            |> GSet.add "z"
+        let b = 
+            init
+            |> GSet.add "u"
+            |> GSet.add "y"
+        let ab = GSet.merge a b
+        let (_, Some(d)) = GSet.split a
+        let bd = GSet.mergeDelta b d
+
+        GSet.value ab = GSet.value bd
+
 open GSetTests
 
 printfn "[TEST] GSet should add elements: %b" <| ``GSet should add elements``()
 printfn "[TEST] GSet should merge both ways: %b" <| ``GSet should merge both ways``()
+printfn "[TEST] Get should merge deltas: %b" <| ``Get should merge deltas``()

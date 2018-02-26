@@ -1,13 +1,13 @@
 /// The MIT License (MIT)
 /// Copyright (c) 2018 Bartosz Sypytkowski
 
-namespace Crdt
-
 #load "lwwreg.fsx"
 
 open System
 
 module LWWRegTests =
+
+    open Crdt
 
     let ``Last-Write-Wins register should be able to set value with clock attached`` () =
         let value= 
@@ -27,3 +27,8 @@ module LWWRegTests =
 
         LWWReg.value reg = 2 &&
         reg = LWWReg(2, now + sec)
+
+open LWWRegTests
+
+printfn "[TEST] Last-Write-Wins register should be able to set value with clock attached: %b" <| ``Last-Write-Wins register should be able to set value with clock attached``()
+printfn "[TEST] Last-Write-Wins register should always pick the latest value: %b" <| ``Last-Write-Wins register should always pick the latest value``()

@@ -1,12 +1,12 @@
 /// The MIT License (MIT)
 /// Copyright (c) 2018 Bartosz Sypytkowski
 
-namespace Crdt
-
 #load "aworset.fsx"
 
 module AWORSetTests =
-
+ 
+    open Crdt
+    
     let ``AWORSet should add, remove and re-add elements in the same replica`` () = 
         let value =
             AWORSet.zero
@@ -54,3 +54,9 @@ module AWORSetTests =
         let ba = AWORSet.merge b a
         ab = ba &&
         AWORSet.value ab = AWORSet.value ba
+
+open AWORSetTests
+
+printfn "[TEST] AWORSet should add, remove and re-add elements in the same replica: %b" <| ``AWORSet should add, remove and re-add elements in the same replica``()
+printfn "[TEST] AWORSet should prefer adds over rems in concurrent updates: %b" <| ``AWORSet should prefer adds over rems in concurrent updates``()
+printfn "[TEST] AWORSet should merge in both directions: %b" <| ``AWORSet should merge in both directions``()

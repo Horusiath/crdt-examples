@@ -1,11 +1,11 @@
 /// The MIT License (MIT)
 /// Copyright (c) 2018 Bartosz Sypytkowski
 
-namespace Crdt
-
 #load "pset.fsx"
 
 module PSetTests =
+
+    open Crdt
 
     let ``2-Phase set should be able to add and remove elements and prefer removal`` () =
         let value = 
@@ -36,3 +36,8 @@ module PSetTests =
         let ba = PSet.merge b a
         ab = ba &&
         PSet.value ab = PSet.value ba
+
+open PSetTests
+
+printfn "[TEST] 2-Phase set should be able to add and remove elements and prefer removal: %b" <| ``2-Phase set should be able to add and remove elements and prefer removal``()
+printfn "[TEST] 2-Phase set should merge in both directions: %b" <| ``2-Phase set should merge in both directions``()
