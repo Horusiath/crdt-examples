@@ -3,33 +3,31 @@
 
 namespace Crdt
 
-#load "../../common.fsx"
+#load "./kernel.fsx"
 
-type Dot = ReplicaId * int64
-type AWORSet<'a when 'a: comparison> = AWORSet of elements:Map<'a, Dot> * vector:VTime * delta:Delta<'a> option
-and Delta<'a when 'a: comparison> =
-    | Add of AWORSet<'a>
-    | Remove of AWORSet<'a>
-    | FullState of AWORSet<'a>
-    | Group of Delta<'a> list
+type AWORSet<'a when 'a: comparison> = AWORSet of core:DotKernel<'a> * delta:DotKernel<'a> option
 
 [<RequireQualifiedAccess>]
 module AWORSet =
 
-    let zero = AWORSet(Map.empty, Version.zero, None)
+    let zero = AWORSet(DotKernel.zero, None)
     
-    let value (AWORSet(e, _, _)) =
-        e 
-        |> Map.toSeq
-        |> Seq.map fst
+    let value (AWORSet(k, _)) =
+        k 
+        |> DotKernel.values
         |> Set.ofSeq
 
-    let add r (AWORSet(e, v, _)) =
-        let c = 1L + Helpers.getOrElse r 0L v
-        zero
+    let add r v (AWORSet(k, d)) =
+        let (k2, d2) = DotKernel.add r v (k, defaultArg d DotKernel.zero)
+        AWORSet(k2, Some d2)
 
-    let remove r (AWORSet(e, v, _)) = zero
+    let rem r v (AWORSet(k, d)) =
+        let (k2, d2) = DotKernel.remove r v (k, defaultArg d DotKernel.zero)
+        AWORSet(k2, Some d2)
 
-    let merge (AWORSet(e1, v1, _)) (AWORSet(e2, v2, _)) = zero
+    let merge (AWORSet(ka, da)) (AWORSet(kb, db)) = 
+        let dc = Helpers.mergeOption DotKernel.merge da db
+        let kc = DotKernel.merge ka kb
+        AWORSet(kc, dc)
 
-    let split (AWORSet(e, v, d)) = AWORSet(e, v, None), d
+    let split (AWORSet(k, d)) = AWORSet(k, None), d
