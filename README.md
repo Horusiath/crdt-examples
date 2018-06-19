@@ -7,9 +7,9 @@ List of CRDTs (implemented and to be implemented):
         - [x] Grow-only Counter
         - [x] Increment/Decrement Counter
         - [x] Grow-only Set
+        - [x] Add Wins Observed Remove Set
+        - [x] Multi Value Register
         - [ ] Bounded Counter
-        - [ ] Add Wins Observed Remove Set
-        - [ ] Multi Value Register
     - [x] Grow-only Counter
     - [x] Increment/Decrement Counter
     - [x] Grow-only Set
