@@ -48,6 +48,13 @@ module DotKernel =
             ) (k.Entries, d.Context)
         ({ k with Entries = entries }, { d with Context = deltaCtx |> DotContext.compact })
 
+    /// Removes all values from kernel, but maintains its context.
+    let removeAll (k, d) =
+        let deltaCtx = 
+            k.Entries 
+            |> Map.fold (fun acc dot _ -> DotContext.add dot acc) d.Context
+        ({ k with Entries = Map.empty }, { d with Context = deltaCtx |> DotContext.compact })
+
     let merge a b =
         // first add only those elements, that haven't been seen in 
         // current history of dots
