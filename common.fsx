@@ -41,9 +41,12 @@ type VTime = Map<ReplicaId, int64>
 [<RequireQualifiedAccess>]     
 module Version =  
     let zero: VTime = Map.empty
+    
     let inc r (vv: VTime) = vv |> Helpers.upsert r 1L ((+)1L)
+
     let merge vv1 vv2 =
         vv2 |> Map.fold (fun acc k v2 -> Helpers.upsert k v2 (max v2) acc) vv1
+
     let compare (a: VTime) (b: VTime): Ord = 
         let valOrDefault k map =
             match Map.tryFind k map with
@@ -61,3 +64,18 @@ module Version =
             | Ord.Lt when va > vb -> Ord.Cc
             | Ord.Gt when va < vb -> Ord.Cc
             | _ -> prev ) Ord.Eq
+
+/// Matrix clock to setup the version of an entity.
+type MClock = Map<ReplicaId, VTime>
+
+[<RequireQualifiedAccess>]
+module MVersion =
+    let zero: MClock = Map.empty
+
+    let merge (replica: ReplicaId) (vtime: VTime) (clock: MClock): MClock =
+        Helpers.upsert replica vtime (Version.merge vtime) clock
+
+    let min (clock: MClock): VTime =
+        let mergeMin a b = a |> Map.fold (fun acc k va -> Helpers.upsert k va (min va) acc) b
+        clock
+        |> Map.fold (fun acc k time -> mergeMin acc time) Map.empty

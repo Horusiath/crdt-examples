@@ -5,9 +5,6 @@ namespace Crdt
 
 #load "../common.fsx"
 
-/// Identifier of a replica. In real use cases of RGArrays, string is probably too heavy.
-type ReplicaId = string
-
 /// Absolute position identifier.
 type Position = int * ReplicaId
 
