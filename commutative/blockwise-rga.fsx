@@ -12,7 +12,7 @@ type Position = int * ReplicaId
 type BlockId = Position * int
 
 /// Alias for a segment used - potentially could be Memory<>, ArraySegment<> or ByteBuffer.
-type Vec<'a> = 'a[]
+type Vec<'a> = 'a[] 
 
 type Body<'a> =
     | Data of Vec<'a>
@@ -25,12 +25,11 @@ type Block<'a> =
 
 /// Available RGArray operations.
 type RGAOp<'a> =
-  | Insert of value:'a * at:BlockId * after:BlockId
+  | Insert of block:Vec<'a> * at:BlockId * after:BlockId
   | Remove of at:BlockId * length:int
-  | Prune of VTime
 
-type RGArray<'a> = RGA of maxSeqNr:int * version:MClock * blocks:Map<BlockId, Block<'a>>
-  with static member Empty: RGArray<'a> = RGA(0, Map.empty, Map.ofList [ ((0, ""), 0), { Body = Tombstone 0; Next = None; Link = None } ])
+type RGArray<'a> = RGA of maxSeqNr:int * blocks:Map<BlockId, Block<'a>>
+  with static member Empty: RGArray<'a> = RGA(0, Map.ofList [ ((0, ""), 0), { Body = Tombstone 0; Next = None; Link = None } ])
 
 module RGArray =
 
@@ -41,7 +40,7 @@ module RGArray =
   let empty(): RGArray<'a> = RGArray<'a>.Empty
 
   /// Returns an indexed collection represented by the RGArray.
-  let value (RGA(_,_,blocks)): 'a[] =
+  let value (RGA(_,blocks)): 'a[] =
     let rec foldStep acc fn blocks pos =
       match pos with
       | None   -> acc
@@ -57,7 +56,7 @@ module RGArray =
     (foldStep (ResizeArray()) (fun a d -> a.AddRange d; a) blocks head).ToArray()
 
   /// Returns an absolute position based on a relative index from a value materialized from RGArray.
-  let positionAtIndex index (RGA(_,_, blocks)) =
+  let blockIdAtIndex (index: int) (RGA(_, blocks)): BlockId option =
     let rec loop blocks i pos =
       let vertex = Map.find pos blocks
       match vertex.Body, vertex.Next with
@@ -69,17 +68,37 @@ module RGArray =
     loop blocks index head
 
   /// Creates an event that after `apply` will insert value at a given position in the RGArray.
-  let insertAfter replica pos value (RGA(max,_,_)) = ??? // Insert(value, (max+1,replica), pos)
+  let insertAfter (replica: ReplicaId) (pos: BlockId) (block: Vec<'a>) (RGA(max,_)) =
+    let blockId: BlockId = ((max+1, replica), 0)  
+    Insert(block, blockId, pos)
   
   /// Creates an event that after `apply` will remove an element at given position from a RGArray.
-  let removeAt (pos: BlockId) (length: int) (RGA _) = ??? // Remove pos
-
-  let prune (RGA(_, version, _)) =
-      let seenByAll = MVersion.min version
-      Prune seenByAll
+  let removeAt (pos: BlockId) (length: int) (RGA _) = Remove(pos, length)
 
   /// Applies operation (either created locally or from remote replica) to current RGArray.
-  let apply op (RGA(seqNr, version, blocks)): RGArray<'a> =
+  let apply op (RGA(seqNr, blocks)): RGArray<'a> =
+    /// Check if the offset fits inside a given block, and split it in that case.
+    let rec maybeSplit blocks (at: int) blockId (block: Block<'a>) =
+      match block.Body with
+      | Data d when at < d.Length -> 
+        let (lvec, rvec) = Array.splitAt at d
+        let rid = (fst blockId, at)
+        let right = { Body = Data rvec; Next = block.Next; Link = block.Link }
+        let left = { Body = Data lvec; Next = Some rid; Link = Some rid }
+        Some (left, right, rid)
+      | Data d ->
+        let blockId' = block.Link.Value
+        let block' = Map.find blockId' blocks
+        maybeSplit blocks (at - d.Length) blockId' block'
+      | Tombstone len when at < len -> 
+        let rid = (fst blockId, at)
+        let right = { Body = Tombstone (len - at); Next = block.Next; Link = block.Link }
+        let left = { Body = Tombstone at; Next = Some rid; Link = Some rid }
+        Some (left, right, rid)
+      | Tombstone len -> 
+        let blockId' = block.Link.Value
+        let block' = Map.find blockId' blocks
+        maybeSplit blocks (at - len) blockId' block'
     // let rec update value pos prev vertex blocks =
     //   match vertex.Next with
     //   | None ->
@@ -103,10 +122,3 @@ module RGArray =
       // let blocks' = update value at after prev blocks
       // let seqNr' = max seqNr (fst at)
       // RGA(seqNr', blocks')
-    | Prune before ->
-      let blocks' = 
-        Map.fold (fun acc pos block -> 
-          match block.Body with
-          | Tombstone v when Version.compare v before = Ord.Lt -> Map.remove pos acc
-          | _ -> acc) blocks blocks
-        RGA(seqNr, version, blocks')
