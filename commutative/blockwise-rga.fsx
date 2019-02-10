@@ -17,6 +17,10 @@ type Vec<'a> = 'a[]
 type Body<'a> =
     | Data of Vec<'a>
     | Tombstone of length:int
+    member b.Length =
+      match b with
+      | Data d -> d.Length
+      | Tombstone l -> l
 
 type Block<'a> =
     { Body: Body<'a>
@@ -27,6 +31,8 @@ type Block<'a> =
 type RGAOp<'a> =
   | Insert of block:Vec<'a> * at:BlockId * after:BlockId
   | Remove of at:BlockId * length:int
+  member op.At =
+    match op with Insert(_, at, _) | Remove(at, _) -> at
 
 type RGArray<'a> = RGA of maxSeqNr:int * blocks:Map<BlockId, Block<'a>>
   with static member Empty: RGArray<'a> = RGA(0, Map.ofList [ ((0, ""), 0), { Body = Tombstone 0; Next = None; Link = None } ])
@@ -73,9 +79,35 @@ module RGArray =
     let blockId: BlockId = ((max+1, replica), 0)  
     Insert(block, blockId, pos)
   
+  /// Finds a first block containing a position specified by a given BlockId (Position of head + offset).
+  let private findContainingBlock (blockId: BlockId) blocks =
+    let rec loop blocks offset blockId =
+      let block = Map.find blockId blocks
+      if block.Body.Length > offset 
+      then (blockId, block)
+      else loop blocks (offset - block.Body.Length) (block.Next.Value)
+
+    match Map.tryFind blockId blocks with
+    | Some block -> (blockId, block)
+    | None ->
+      let (position, offset) = blockId
+      loop blocks offset (position, 0)
+
   /// Creates an event that after `apply` will remove an element at given position from a RGArray.
-  let removeAt (pos: BlockId) (length: int) (RGA _) = 
-    Remove(pos, length) //TODO: if length is longer than block.Body length we need to split this removal into parts
+  let rec removeAt (at: BlockId) (length: int) rga =
+    let (RGA (_, blocks)) = rga
+    match Map.tryFind at blocks with
+    | Some b when b.Body.Length >= length -> [Remove(at, length)]
+    | Some b ->
+      let event = Remove(at, b.Body.Length)
+      event::(removeAt b.Next.Value (length - b.Body.Length) rga)
+    | None -> 
+      let ((pos, offset), block) = findContainingBlock at blocks
+      if block.Body.Length - offset >= length 
+      then [Remove(at, length)]
+      else 
+        let remaining = length - (block.Body.Length - offset)
+        Remove(at, length - remaining)::(removeAt block.Next.Value remaining rga)
 
   /// Applies operation (either created locally or from remote replica) to current RGArray.
   let apply op (RGA(seqNr, blocks)): RGArray<'a> =
