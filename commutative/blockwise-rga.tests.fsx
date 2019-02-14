@@ -42,4 +42,25 @@ module RGArrayTests =
       (id.Value,  rga)
       |> insertApply "A" (arr "!abc!")
       |> snd
-    String(RGArray.value rga) = "wel!abc!come"
+    String(RGArray.value rga') = "wel!abc!come"
+    
+  let ``RGA should allow to add elements in the middle multiple times`` () =
+    let rga = init()
+    let id = RGArray.blockIdAtIndex 2 rga
+    let rga' =
+      (id.Value,  rga)
+      |> insertApply "A" (arr "!abc!")
+      |> snd
+    let id' = RGArray.blockIdAtIndex 9 rga'
+    let rga'' =
+      (id'.Value,  rga')
+      |> insertApply "B" (arr "!def!")
+      |> snd
+    String(RGArray.value rga'') = "wel!abc!co!def!me"
+
+open RGArrayTests
+
+printfn "RGA should allow to add elements to the tail: %b" <| ``RGA should allow to add elements to the tail`` ()
+printfn "RGA should allow to add elements to the head: %b" <| ``RGA should allow to add elements to the head`` ()
+printfn "RGA should allow to add elements in the middle: %b" <| ``RGA should allow to add elements in the middle`` ()
+printfn "RGA should allow to add elements in the middle multiple times: %b" <| ``RGA should allow to add elements in the middle multiple times`` ()

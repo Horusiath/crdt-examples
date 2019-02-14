@@ -64,14 +64,14 @@ module RGArray =
 
   /// Returns an absolute position based on a relative index from a value materialized from RGArray.
   let blockIdAtIndex (index: int) (RGA(_, blocks)): BlockId option =
-    let rec loop blocks i pos =
-      let vertex = Map.find pos blocks
+    let rec loop blocks remaining id =
+      let vertex = Map.find id blocks
       match vertex.Body, vertex.Next with
-      | Data d, _ when i < d.Length -> Some (fst pos, i) // found
-      | Data d, Some n -> loop blocks (i-d.Length) n // move next
+      | Data d, _ when remaining < d.Length -> Some (fst id, remaining + snd id) // found
+      | Data d, Some n -> loop blocks (remaining-d.Length) n // move next
       | Data _, None -> None // not found
       | Tombstone _, None -> None // not found
-      | Tombstone _, Some n -> loop blocks i n // skip
+      | Tombstone _, Some n -> loop blocks remaining n // skip
     loop blocks index head
 
   /// Creates an event that after `apply` will insert value at a given position in the RGArray.
@@ -115,8 +115,8 @@ module RGArray =
     let rec split blocks (at: int) blockId (block: Block<'a>) =
       match block.Body with
       | Data d when at < d.Length -> 
-        let (lvec, rvec) = Array.splitAt at d
-        let rid: BlockId = (fst blockId, at)
+        let (lvec, rvec) = Array.splitAt (at+1) d
+        let rid: BlockId = (fst blockId, (snd blockId) + at+1)
         let right = { Body = Data rvec; Next = block.Next; Link = block.Link }
         let left = { Body = Data lvec; Next = Some rid; Link = Some rid }
         (left, blockId, right, rid)
@@ -138,7 +138,8 @@ module RGArray =
       match Map.tryFind at blocks with
       | None -> 
         let (position, offset) = at
-        let (left, leftId, right, rightId) = split blocks offset at (Map.find (position, 0) blocks)
+        let at' = (position, 0)
+        let (left, leftId, right, rightId) = split blocks offset at' (Map.find at' blocks)
         let blocks' =
           blocks
           |> Map.add leftId left
@@ -174,7 +175,8 @@ module RGArray =
         RGA(max seqNr atSeqNr, blocks')
       | None ->
         let (position, offset) = after
-        let (left, leftId, right, rightId) = split blocks offset after (Map.find (position,0) blocks)
+        let at' = (position, 0)
+        let (left, leftId, right, rightId) = split blocks offset at' (Map.find at' blocks)
         let block = { Body = Data value; Next = Some rightId; Link = None }
         let blocks' =
           blocks
