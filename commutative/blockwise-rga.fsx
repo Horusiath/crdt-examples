@@ -139,17 +139,17 @@ module RGArray =
       | None -> 
         let (position, offset) = at
         let at' = (position, 0)
-        let (left, leftId, right, rightId) = split blocks offset at' (Map.find at' blocks)
+        let (left, leftId, right, rightId) = split blocks (offset-1) at' (Map.find at' blocks)
         let blocks' =
           blocks
           |> Map.add leftId left
           |> Map.add rightId right
-        remove blocks' at length
+        remove blocks' at (length-1)
       | Some block ->
         match block.Body with
         | Data d when d.Length = length -> Map.add at { block with Body = Tombstone length} blocks
         | Data d when d.Length > length ->
-          let (left, leftId, right, rightId) = split blocks (d.Length - length) at block
+          let (left, leftId, right, rightId) = split blocks (length-1) at block
           blocks
           |> Map.add leftId { left with Body = Tombstone length }
           |> Map.add rightId right
