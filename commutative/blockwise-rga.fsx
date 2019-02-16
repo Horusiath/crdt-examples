@@ -10,7 +10,8 @@ namespace Crdt
         It's meant mostly for educational purposes. It's not optimized for speed.
         Also it doesn't support tombstone prunning atm. Changing this implementation
         into mutable one with direct links between data blocks would bring a big
-        performance gain.
+        performance gain. Another optimization would be about using B-Tree index for
+        efficient mapping from index in value array to actual block.
 *)
 
 /// Absolute position identifier of a given block sequence.

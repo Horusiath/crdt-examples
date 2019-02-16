@@ -21,4 +21,4 @@ List of CRDTs (implemented and to be implemented):
     - [ ] Counter
     - [ ] Observed Remove Set
     - [ ] Linear Sequence (L-Seq)
-    - [ ] Replicated Growable Array (block-wise variant)
+    - [x] Replicated Growable Array (both naive and block-wise variant)
