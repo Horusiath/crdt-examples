@@ -5,6 +5,14 @@ namespace Crdt
 
 #load "../common.fsx"
 
+(*
+  NOTE: this is a blockwise immutable implementation of Replicated Growable Array. 
+        It's meant mostly for educational purposes. It's not optimized for speed.
+        Also it doesn't support tombstone prunning atm. Changing this implementation
+        into mutable one with direct links between data blocks would bring a big
+        performance gain.
+*)
+
 /// Absolute position identifier of a given block sequence.
 type Position = int * ReplicaId
 
@@ -84,7 +92,7 @@ module RGArray =
     let rec loop blocks offset blockId =
       let block = Map.find blockId blocks
       if block.Body.Length > offset 
-      then (blockId, block)
+      then ((fst blockId, offset), block)
       else loop blocks (offset - block.Body.Length) (block.Next.Value)
 
     match Map.tryFind blockId blocks with
@@ -144,7 +152,7 @@ module RGArray =
           blocks
           |> Map.add leftId left
           |> Map.add rightId right
-        remove blocks' at (length-1)
+        remove blocks' at length
       | Some block ->
         match block.Body with
         | Data d when d.Length = length -> Map.add at { block with Body = Tombstone length} blocks
