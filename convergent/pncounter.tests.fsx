@@ -10,22 +10,22 @@ module PNCounterTests =
     let ``PNCounter should inc and dec value per node`` () =
         let value = 
             PNCounter.zero
-            |> PNCounter.inc "A"
-            |> PNCounter.inc "B"
-            |> PNCounter.inc "A"
-            |> PNCounter.dec "C"
-            |> PNCounter.inc "C"
-            |> PNCounter.dec "A"
+            |> PNCounter.inc "A" 1L
+            |> PNCounter.inc "B" 1L
+            |> PNCounter.inc "A" 1L
+            |> PNCounter.dec "C" 1L
+            |> PNCounter.inc "C" 1L
+            |> PNCounter.dec "A" 1L
             |> PNCounter.value
         value = 2L
     
     let ``PNCounter should merge in both directions`` () =
-        let g0 = PNCounter.inc "A" PNCounter.zero
+        let g0 = PNCounter.inc "A" 1L PNCounter.zero
         let gA = 
             g0
-            |> PNCounter.inc "A"
-            |> PNCounter.dec "A"            
-        let gB = PNCounter.dec "B" g0
+            |> PNCounter.inc "A" 1L
+            |> PNCounter.dec "A" 2L         
+        let gB = PNCounter.dec "B" 1L g0
         let gAB = PNCounter.merge gA gB
         let gBA = PNCounter.merge gB gA
 

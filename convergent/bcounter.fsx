@@ -2,7 +2,6 @@
 /// Copyright (c) 2018 Bartosz Sypytkowski
 
 namespace Crdt
-open System.Web.UI.WebControls
 
 #load "../common.fsx"
 #load "pncounter.fsx"
@@ -12,17 +11,6 @@ open System.Web.UI.WebControls
 /// name), above which any increments will fail to execute.
 type BCounter = BCounter of PNCounter * Map<(ReplicaId*ReplicaId), int64>
 
-/// Result of trying to apply increment/decrement operation
-/// over `BCounter` can be either:
-/// 
-/// - `Ok` once counter value could be successfully incremented/decremented.
-/// - `Error` when operation is known to fail due to counter boundaries reached, 
-/// or when there was no sufficient information to determine one of previous two results.
-/// 
-/// In case of inconclusive error operation, it means that local replica has not enough 
-/// quota, but it's known that sum of quotas on remote replicas is enough to satisfy
-/// that operation. In that case you need to ask a remote replica(s) to transfer their 
-/// quota first to local replica, and then try to execute operation again.
 [<RequireQualifiedAccess>]
 module BCounter =
 
@@ -36,28 +24,32 @@ module BCounter =
     let quota rep (BCounter(counter, others)) =
         others
         |> Map.fold (fun acc (src, dst) v ->
-            if   src = rep then acc + v
-            elif dst = rep then acc - v
+            if   src = rep then acc - v
+            elif dst = rep then acc + v
             else acc) (PNCounter.value counter)
 
     /// Returns a value of the counter.
     let value (BCounter(c, _)) = PNCounter.value c
 
-    /// Increments the counter value on a local replica.
+    /// Increments the counter value on a local replica. It returns updated counter,
+    /// because this implementation allways allows for incrementing values.
     let inc rep value (BCounter(c, others)) =
-        BCounter(PNCounter.inc rep c, others)
+        BCounter(PNCounter.inc rep value c, others)
 
-    /// Decrements the counter value on a local replica.
+    /// Decrements the counter value on a local replica. If there's no quota left,
+    /// it will fail with Error(n), where `n` is the current quota allowed for a given replica.
     let dec rep value counter =
         let q = quota rep counter
-        if q < 0L then Error q 
+        if q < value then Error q 
         else 
             let (BCounter(c, others)) = counter
-            Ok <| BCounter(PNCounter.dec rep c, others)
+            Ok <| BCounter(PNCounter.dec rep value c, others)
 
-    /// Moves some amount of quota from one counter to another one.
+    /// Moves some amount of quota from one counter to another one. If there's not
+    /// enough quota to satisfy transfer, it will fail with Error(n), where `n` is the current
+    /// quota allowed for a given source replica.
     let move src dst value counter =
-        let q =  quota src counter
+        let q = quota src counter
         if value > q then Error q
         else
             let (BCounter(c, others)) = counter

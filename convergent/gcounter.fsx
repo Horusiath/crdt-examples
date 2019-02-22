@@ -14,8 +14,8 @@ module GCounter =
 
     let value (GCounter(c)) = c |> Map.fold (fun acc _ v -> acc + v) 0L
 
-    let inc r (GCounter(c)) =
-        Helpers.upsert r 1L ((+) 1L) c |> GCounter
+    let inc replica value (GCounter(c)) =
+        Helpers.upsert replica value ((+) value) c |> GCounter
 
     let merge (GCounter(a)) (GCounter(b)) =
         a 
