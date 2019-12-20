@@ -13,3 +13,8 @@ module GSet =
     let value (GSet(s)) = s
     let add v (GSet(s)) = GSet (Set.add v s)
     let merge (GSet(a)) (GSet(b)) = GSet (a + b)
+
+    [<Struct>]
+    type Merge<'a when 'a: comparison> = 
+        interface IConvergent<GSet<'a>> with
+            member __.merge a b = merge a b 

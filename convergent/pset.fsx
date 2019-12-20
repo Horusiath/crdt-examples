@@ -15,3 +15,8 @@ module PSet =
     let add v (PSet(add, rem)) = PSet(Set.add v add, rem)
     let rem v (PSet(add, rem)) = PSet(add, Set.add v rem)
     let merge (PSet(add1, rem1)) (PSet(add2, rem2)) = PSet(add1 + add2, rem1 + rem2)
+    
+    [<Struct>]
+    type Merge<'a when 'a: comparison> = 
+        interface IConvergent<PSet<'a>> with
+            member __.merge a b = merge a b 

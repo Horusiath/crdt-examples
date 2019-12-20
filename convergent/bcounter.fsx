@@ -64,3 +64,8 @@ module BCounter =
         let az = PNCounter.merge ax ay
         let mz =my |> Map.fold (fun acc k v2 -> Helpers.upsert k v2 (max v2) acc) mx
         BCounter(az, mz)
+        
+    [<Struct>]
+    type Merge = 
+        interface IConvergent<BCounter> with
+            member __.merge a b = merge a b 

@@ -21,3 +21,8 @@ module GCounter =
         a 
         |> Map.fold (fun acc k va -> Helpers.upsert k va (max va) acc) b
         |> GCounter
+        
+    [<Struct>]
+    type Merge = 
+        interface IConvergent<GCounter> with
+            member __.merge a b = merge a b 

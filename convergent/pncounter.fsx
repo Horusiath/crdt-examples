@@ -15,3 +15,8 @@ module PNCounter =
     let dec replica value (PNCounter(inc, dec)) = PNCounter(inc, GCounter.inc replica value dec)
     let merge (PNCounter(inc1, dec1)) (PNCounter(inc2, dec2)) = 
         PNCounter(GCounter.merge inc1 inc2, GCounter.merge dec1 dec2)
+        
+    [<Struct>]
+    type Merge = 
+        interface IConvergent<PNCounter> with
+            member __.merge a b = merge a b 

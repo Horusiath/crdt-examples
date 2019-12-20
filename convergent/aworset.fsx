@@ -50,3 +50,8 @@ module AWORSet =
             | Some vr when Version.compare va vr <> Ord.Lt -> acc
             | _ -> Map.remove k acc ) remk
         AWORSet(add, rem)
+
+    [<Struct>]
+    type Merge<'a when 'a: comparison> = 
+        interface IConvergent<AWORSet<'a>> with
+            member __.merge a b = merge a b 

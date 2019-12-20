@@ -38,13 +38,17 @@ module Helpers =
    
 type VTime = Map<ReplicaId, int64>
 
+[<Interface>]
+type IConvergent<'a> =
+    abstract merge: 'a -> 'a -> 'a
+
 [<RequireQualifiedAccess>]     
 module Version =  
     let zero: VTime = Map.empty
     
     let inc r (vv: VTime) = vv |> Helpers.upsert r 1L ((+)1L)
 
-    let merge vv1 vv2 =
+    let merge (vv1: VTime) (vv2: VTime) =
         vv2 |> Map.fold (fun acc k v2 -> Helpers.upsert k v2 (max v2) acc) vv1
 
     let compare (a: VTime) (b: VTime): Ord = 
@@ -64,6 +68,11 @@ module Version =
             | Ord.Lt when va > vb -> Ord.Cc
             | Ord.Gt when va < vb -> Ord.Cc
             | _ -> prev ) Ord.Eq
+
+    [<Struct>]
+    type Merge = 
+        interface IConvergent<VTime> with
+            member __.merge a b = merge a b 
 
 /// Matrix clock to setup the version of an entity.
 type MClock = Map<ReplicaId, VTime>
