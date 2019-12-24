@@ -4,7 +4,7 @@
 #load "mvreg.fsx"
 
 module MVRegTests =
- 
+
     open Crdt
 
     let ``MVReg should allow to override values for their causal past`` () =

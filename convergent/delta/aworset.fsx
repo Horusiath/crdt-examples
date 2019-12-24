@@ -1,9 +1,9 @@
 /// The MIT License (MIT)
 /// Copyright (c) 2018 Bartosz Sypytkowski
 
-namespace Crdt
-
 #load "./kernel.fsx"
+
+namespace Crdt
 
 type AWORSet<'a when 'a: comparison> = AWORSet of core:DotKernel<'a> * delta:DotKernel<'a> option
 

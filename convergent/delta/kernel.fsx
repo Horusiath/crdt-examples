@@ -1,9 +1,9 @@
 /// The MIT License (MIT)
 /// Copyright (c) 2018 Bartosz Sypytkowski
 
-namespace Crdt
-
 #load "context.fsx"
+
+namespace Crdt
 
 type DotKernel<'a when 'a: equality> =
     { /// Set of all dots that have been ever seen. If a dot is not

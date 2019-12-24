@@ -1,9 +1,9 @@
 /// The MIT License (MIT)
 /// Copyright (c) 2018 Bartosz Sypytkowski
 
-namespace Crdt
-
 #load "kernel.fsx"
+
+namespace Crdt
 
 type MVReg<'a> when 'a: equality = MVReg of core:DotKernel<'a> * delta:DotKernel<'a> option
 

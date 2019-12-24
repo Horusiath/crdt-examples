@@ -1,7 +1,7 @@
 /// The MIT License (MIT)
 /// Copyright (c) 2018 Bartosz Sypytkowski
 
-namespace Crdt 
+namespace Crdt
 
 open System
 
@@ -44,9 +44,12 @@ type IConvergent<'a> =
 
 [<RequireQualifiedAccess>]     
 module Version =  
+
     let zero: VTime = Map.empty
     
-    let inc r (vv: VTime) = vv |> Helpers.upsert r 1L ((+)1L)
+    let inc r (vv: VTime): VTime = vv |> Helpers.upsert r 1L ((+)1L)
+
+    let set r ts (vv: VTime): VTime = Map.add r ts vv
 
     let merge (vv1: VTime) (vv2: VTime) =
         vv2 |> Map.fold (fun acc k v2 -> Helpers.upsert k v2 (max v2) acc) vv1
@@ -88,3 +91,20 @@ module MVersion =
         let mergeMin a b = a |> Map.fold (fun acc k va -> Helpers.upsert k va (min va) acc) b
         clock
         |> Map.fold (fun acc k time -> mergeMin acc time) Map.empty
+
+[<RequireQualifiedAccess>]
+module Option =
+
+    let merge nestedMerge a b =
+        match a, b with
+        | None, None -> None
+        | left, None -> left
+        | None, right -> right
+        | Some left, Some right -> Some (nestedMerge left right)
+
+    [<Struct>]
+    type Merge<'a, 'm when 'm :> IConvergent<'a>> = 
+        interface IConvergent<Option<'a>> with
+            member __.merge a b = 
+                let nestedMerge = Unchecked.defaultof<'m>.merge
+                merge nestedMerge a b

@@ -1,9 +1,9 @@
 /// The MIT License (MIT)
 /// Copyright (c) 2018 Bartosz Sypytkowski
 
-namespace Crdt
-
 #load "gset.fsx"
+
+namespace Crdt
 
 type PSet<'a when 'a: comparison> = PSet of add:Set<'a> * rem:Set<'a>
 

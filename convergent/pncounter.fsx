@@ -1,9 +1,9 @@
 /// The MIT License (MIT)
 /// Copyright (c) 2018 Bartosz Sypytkowski
 
-namespace Crdt
-
 #load "gcounter.fsx"
+
+namespace Crdt
 
 type PNCounter = PNCounter of inc:GCounter * dec:GCounter
 

@@ -1,9 +1,9 @@
 /// The MIT License (MIT)
 /// Copyright (c) 2018 Bartosz Sypytkowski
 
-namespace Crdt
-
 #load "../common.fsx"
+
+namespace Crdt
 
 type AWORSet<'a when 'a: comparison> = AWORSet of add:Map<'a, VTime> * rem:Map<'a, VTime>
 

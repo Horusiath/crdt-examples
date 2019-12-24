@@ -1,10 +1,10 @@
 /// The MIT License (MIT)
 /// Copyright (c) 2018 Bartosz Sypytkowski
 
-namespace Crdt
-
 #load "../common.fsx"
 #load "pncounter.fsx"
+
+namespace Crdt
 
 /// A bounded counter, which enables to perform  Counter-like increment/decrement
 /// operation. Unlike `GCounter`/`PNCounter` it's allowed to have a max boundary (hence

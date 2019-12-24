@@ -1,9 +1,9 @@
 /// The MIT License (MIT)
 /// Copyright (c) 2018 Bartosz Sypytkowski
 
-namespace Crdt
-
 #load "../common.fsx"
+
+namespace Crdt
 
 type GSet<'a when 'a: comparison> = GSet of Set<'a>
 

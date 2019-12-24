@@ -1,9 +1,9 @@
 /// The MIT License (MIT)
 /// Copyright (c) 2018 Bartosz Sypytkowski
 
-namespace Crdt
-
 #load "../../common.fsx"
+
+namespace Crdt
 
 type GCounter = GCounter of values:Map<ReplicaId, int64> * delta:GCounter option
 
