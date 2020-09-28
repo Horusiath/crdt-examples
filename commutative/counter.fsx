@@ -6,6 +6,8 @@ namespace Crdt
 #load "common.fsx"
 #load "protocol.fsx"
 
+open Crdt.Protocol
+
 [<RequireQualifiedAccess>]
 module Counter =
     

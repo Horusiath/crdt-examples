@@ -3,10 +3,11 @@
 
 namespace Crdt
 
-open System
-
 #load "common.fsx"
 #load "protocol.fsx"
+
+open System
+open Crdt.Protocol
 
 /// Block-wise RGA. It exposes operations for adding/removing multiple elements at once.
 [<RequireQualifiedAccess>]
