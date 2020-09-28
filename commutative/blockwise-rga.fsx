@@ -3,221 +3,225 @@
 
 namespace Crdt
 
-#load "../common.fsx"
+open System
 
-(*
-  NOTE: this is a blockwise immutable implementation of Replicated Growable Array. 
-        It's meant mostly for educational purposes. It's not optimized for speed.
-        Also it doesn't support tombstone prunning atm. Changing this implementation
-        into mutable one with direct links between data blocks would bring a big
-        performance gain. Another optimization would be about using B-Tree index for
-        efficient mapping from index in value array to actual block.
-*)
+#load "common.fsx"
+#load "protocol.fsx"
 
-/// Absolute position identifier of a given block sequence.
-type Position = int * ReplicaId
-
-/// Absolute position identifier of an elements inside of a given block sequence.
-type BlockId = Position * int
-
-/// Alias for a segment used - potentially could be Memory<>, ArraySegment<> or ByteBuffer.
-type Vec<'a> = 'a[] 
-
-type Body<'a> =
-    | Data of Vec<'a>
-    | Tombstone of length:int
-    member b.Length =
-      match b with
-      | Data d -> d.Length
-      | Tombstone l -> l
-
-/// Block describes a committed segment of values or a tombstone of given length. The
-/// `Next` field is an ID of the next block in indexed sequence being the RGA result.
-/// In case of splitting the block for the purpose of insert-between operation on the
-/// continuous segment, a `Link` is used to remember the blocks that have been a single
-/// one before the split.
-type Block<'a> =
-    { Body: Body<'a>
-      Next: BlockId option
-      Link: BlockId option }
-
-/// Available RGArray operations.
-type RGAOp<'a> =
-  | Insert of segment:Vec<'a> * at:BlockId * after:BlockId
-  | Remove of at:BlockId * length:int
-  member op.At =
-    match op with Insert(_, at, _) | Remove(at, _) -> at
-
-type RGArray<'a> = RGA of maxSeqNr:int * blocks:Map<BlockId, Block<'a>>
-  with static member Empty: RGArray<'a> = RGA(0, Map.ofList [ ((0, ""), 0), { Body = Tombstone 0; Next = None; Link = None } ])
-
-module RGArray =
-
-  /// A head position of RGArray.
-  let head: BlockId = ((0, ""), 0)
-
-  /// Returns an empty RGArray.
-  let empty(): RGArray<'a> = RGArray<'a>.Empty
-
-  /// Returns an indexed collection represented by the RGArray.
-  let value (RGA(_,blocks)): 'a[] =
-    let rec foldStep acc fn blocks pos =
-      match pos with
-      | None   -> acc
-      | Some p -> 
-        let block = Map.find p blocks
-        match block.Body with
-        | Tombstone _ -> foldStep acc fn blocks block.Next
-        | Data data -> 
-          let acc' = fn acc data
-          foldStep acc' fn blocks block.Next
+/// Block-wise RGA. It exposes operations for adding/removing multiple elements at once.
+[<RequireQualifiedAccess>]
+module BWRga =
     
+    type Position = (int * ReplicaId)
+    [<Struct>]
+    type PositionOffset =
+        { Position: Position; Offset: int }
+        override this.ToString () = sprintf "(%i%s:%i)" (fst this.Position) (snd this.Position) this.Offset
+    
+    [<Struct>]
+    type Content<'a> =
+        | Content of content:'a[]
+        | Tombstone of skipped:int
+        member this.Slice(offset: int) =
+            match this with
+            | Content data ->
+                let left = Array.take offset data
+                let right = Array.skip offset data
+                (Content left, Content right)
+            | Tombstone length ->
+                (Tombstone offset, Tombstone (length - offset))
+        
+    type Block<'a> =
+        { Ptr: PositionOffset
+          //TODO: in this approach Block contains both user data and CRDT metadata, it's possible
+          // however to split these appart and all slicing manipulations can be performed on blocks
+          // alone. In this case Query method could return an user data right away with no extra
+          // modifications, while the user-content could be stored in optimized structure such as Rope,
+          // instead of deeply cloned arrays used here.
+          Data: Content<'a> }
+        member this.Length =
+            match this.Data with
+            | Content data -> data.Length
+            | Tombstone skipped -> skipped
+            
+        override this.ToString() =
+            sprintf "%O -> %A" this.Ptr this.Data
+            
+    [<RequireQualifiedAccess>]
+    module Block =
+        let tombstone (block: Block<'a>) = { block with Data = Tombstone block.Length }
+        
+        let isTombstone (block: Block<'a>) = match block.Data with Tombstone _ -> true | _ -> false
+        
+        let split (offset) (block: Block<'a>) =
+            if offset = block.Length then (block, None)
+            else
+                let ptr = block.Ptr
+                let (a, b) = block.Data.Slice offset
+                let left = { block with Data = a }
+                let right = { Ptr = { ptr with Offset = ptr.Offset + offset }; Data = b }
+                (left, Some right)
+        
+    type Rga<'a> =
+        { Sequencer: Position
+          Blocks: Block<'a>[] }
+        
+    type Command<'a> =
+        | Insert of index:int * 'a[]
+        | RemoveAt of index:int * count:int
+        
+    type Operation<'a> =
+        | Inserted of after:PositionOffset * at:Position * value:'a[]
+        | Removed of slices:(PositionOffset*int) list
+                
+    /// Given user-aware index, return an index of a block and position inside of that block,
+    /// which matches provided index.
+    let private findByIndex idx blocks =
+        let rec loop currentIndex consumed (idx: int) (blocks: Block<'a>[]) =
+            if idx = consumed then (currentIndex, 0)
+            else
+                let block = blocks.[currentIndex]
+                if Block.isTombstone block then
+                    loop (currentIndex+1) consumed idx blocks
+                else
+                    let remaining = idx - consumed
+                    if remaining <= block.Length then
+                        // we found the position somewhere in the block
+                        (currentIndex, remaining)
+                    else
+                        // move to the next block with i shortened by current block length
+                        loop (currentIndex + 1) (consumed + block.Length) idx blocks
+        loop 0 0 idx blocks
+                
+    let private findByPositionOffset ptr blocks =
+        let rec loop idx ptr (blocks: Block<'a>[]) =
+            let block = blocks.[idx]
+            if block.Ptr.Position = ptr.Position then 
+                if block.Ptr.Offset + block.Length >= ptr.Offset  then (idx, ptr.Offset-block.Ptr.Offset)
+                else loop (idx+1) ptr blocks
+            else loop (idx+1) ptr blocks
+        loop 0 ptr blocks
+                
+    /// Recursively check if the next vertex on the right of a given `offset`
+    /// has position higher than `pos` at if so, shift offset to the right.  
+    let rec private shift offset pos (blocks: Block<'a>[]) =
+        if offset >= blocks.Length then offset // append at the tail
+        else
+            let next = blocks.[offset].Ptr.Position
+            if next < pos then offset
+            else shift (offset+1) pos blocks // move insertion point to the right
+            
+    /// Increments given sequence number.
+    let inline private nextSeqNr ((i, id): Position) : Position = (i+1, id)
+                
+    let private sliceBlocks start count blocks =
+        let rec loop acc idx offset remaining (blocks: Block<'a>[]) =
+            let block = blocks.[idx]
+            let ptr = block.Ptr
+            let ptr = { ptr with Offset = ptr.Offset + offset }
+            let len = block.Length - offset
+            if len > remaining then (ptr, remaining)::acc
+            elif len = 0 then loop acc (idx+1) 0 remaining blocks // skip over empty blocks
+            else loop ((ptr, len)::acc) (idx+1) 0 (remaining-len) blocks
+        let (first, offset) = findByIndex start blocks
+        loop [] first offset count blocks |> List.rev
+        
+    let private filterBlocks slices blocks =
+        let rec loop (acc: ResizeArray<Block<'a>>) idx slices (blocks: Block<'a>[]) =
+            match slices with
+            | [] ->
+                for i=idx to blocks.Length-1 do
+                    acc.Add blocks.[i] // copy over remaining blocks
+                acc.ToArray()
+            | (ptr, length)::tail ->
+                let block = blocks.[idx]
+                if block.Ptr.Position = ptr.Position then // we found valid block
+                    let currLen = block.Length
+                    if block.Ptr.Offset = ptr.Offset then // the beginning of deleted block was found
+                        if currLen = length then // deleted block exactly matches bounds
+                            acc.Add (Block.tombstone block)
+                            loop acc (idx+1) tail blocks
+                        elif currLen < length then // deleted block is longer, delete current one and keep remainder
+                            acc.Add (Block.tombstone block)
+                            let ptr = { ptr with Offset = ptr.Offset + currLen }
+                            loop acc (idx+1) ((ptr, length-currLen)::tail) blocks
+                        else // deleted block is shorter, we need to split current block and tombstone left side
+                            let (left, Some right) = Block.split length block
+                            acc.Add (Block.tombstone left)
+                            acc.Add right
+                            loop acc (idx+1) tail blocks
+                    elif block.Ptr.Offset < ptr.Offset && block.Ptr.Offset + currLen > ptr.Offset then // the deleted block starts inside of a current one
+                        let splitPoint = ptr.Offset - block.Ptr.Offset
+                        let (left, Some right) = Block.split splitPoint block
+                        acc.Add left
+                        if length > right.Length then // remainer is longer than right, we need to subtract it and keep around
+                            let remainer = length - right.Length
+                            acc.Add (Block.tombstone right)
+                            let pos = { ptr with Offset = right.Ptr.Offset + right.Length }
+                            loop acc (idx+1) ((pos, remainer)::tail) blocks
+                        else 
+                            let (del, right) = Block.split length right
+                            acc.Add (Block.tombstone del)
+                            right |> Option.iter acc.Add
+                            loop acc (idx+1) tail blocks
+                    else    // position ID is correct but offset doesn't fit, we need to move on
+                        acc.Add block
+                        loop acc (idx+1) slices blocks
+                else
+                    acc.Add block
+                    loop acc (idx+1) slices blocks
+        loop (ResizeArray()) 1 slices blocks
 
-    let head = (Map.find head blocks).Next
-    (foldStep (ResizeArray()) (fun a d -> a.AddRange d; a) blocks head).ToArray()
-
-  /// Returns an absolute position based on a relative index from a value materialized from RGArray.
-  let blockIdAtIndex (index: int) (RGA(_, blocks)): BlockId option =
-    let rec loop blocks remaining id =
-      let vertex = Map.find id blocks
-      match vertex.Body, vertex.Next with
-      | Data d, _ when remaining < d.Length -> Some (fst id, remaining + snd id) // found
-      | Data d, Some n -> loop blocks (remaining-d.Length) n // move next
-      | Data _, None -> None // not found
-      | Tombstone _, None -> None // not found
-      | Tombstone _, Some n -> loop blocks remaining n // move over tombstone (don't count its length)
-    loop blocks index head
-
-  /// Creates an event that after `apply` will insert value at a given position in the RGArray.
-  let insertAfter (replica: ReplicaId) (pos: BlockId) (block: Vec<'a>) (RGA(max,_)) =
-    let blockId: BlockId = ((max+1, replica), 0)  
-    Insert(block, blockId, pos)
-  
-  /// Finds a first block containing a position specified by a given BlockId (Position of head + offset).
-  let private findContainingBlock (blockId: BlockId) blocks =
-    let rec loop blocks offset blockId =
-      let block = Map.find blockId blocks
-      if block.Body.Length > offset 
-      then ((fst blockId, offset), block)
-      else loop blocks (offset - block.Body.Length) (block.Next.Value)
-
-    match Map.tryFind blockId blocks with
-    | Some block -> (blockId, block)
-    | None ->
-      let (position, offset) = blockId
-      loop blocks offset (position, 0)
-
-  /// Creates an event that after `apply` will remove a given number of elements starting at given position.
-  /// 
-  /// In case when removal will need to affect multiple blocks to satisfy requested lenght, a multiple events
-  /// will be produced - one per each affected block. This is necessary to correctly execute removal operation
-  /// in face of concurrent updates.
-  let rec removeAt (at: BlockId) (length: int) rga =
-    let (RGA (_, blocks)) = rga
-    match Map.tryFind at blocks with
-    | Some b when b.Body.Length >= length -> [Remove(at, length)]
-    | Some b ->
-      let event = Remove(at, b.Body.Length)
-      event::(removeAt b.Next.Value (length - b.Body.Length) rga)
-    | None -> 
-      let ((pos, offset), block) = findContainingBlock at blocks
-      if block.Body.Length - offset >= length 
-      then [Remove(at, length)]
-      else 
-        let remaining = length - (block.Body.Length - offset)
-        Remove(at, length - remaining)::(removeAt block.Next.Value remaining rga)
-
-  /// Applies operation (either created locally or from remote replica) to current RGArray.
-  let apply op (RGA(seqNr, blocks)): RGArray<'a> =
-    /// Check if the offset fits inside a given block, and split it in that case.
-    let rec split blocks (at: int) blockId (block: Block<'a>) =
-      match block.Body with
-      | Data d when at < d.Length -> 
-        // We found a block, which needs to be split.
-        let (lvec, rvec) = Array.splitAt (at+1) d
-        let rid: BlockId = (fst blockId, (snd blockId) + at+1)
-        let right = { Body = Data rvec; Next = block.Next; Link = block.Link }
-        let left = { Body = Data lvec; Next = Some rid; Link = Some rid }
-        (left, blockId, right, rid)
-      | Tombstone len when at < len -> 
-        // We found a block to split, but it's a tombstone. Just split it into two tombstones.
-        let rid = (fst blockId, at)
-        let right = { Body = Tombstone (len - at); Next = block.Next; Link = block.Link }
-        let left = { Body = Tombstone at; Next = Some rid; Link = Some rid }
-        (left, blockId, right, rid)
-      | _ ->
-        // This is not a block to be split - subtract the block's length from expected `at` offset
-        // and continue with the next linked block.
-        let blockId' = block.Link.Value
-        let block' = Map.find blockId' blocks
-        split blocks (at - block.Body.Length) blockId' block'
-
-    /// Marks block at given position as tombstone. If necessary, block may be split into
-    /// 2 or 3 smaller ones to separate the block which is supposed to be tombstoned.  
-    let rec remove blocks at length =
-      match Map.tryFind at blocks with
-      | None -> 
-        // Block was not found directly, so it must be a position somewhere in the middle of
-        // another block. We can find it by starting at first block in sequence (that's why `at'`
-        // has offset set to 0) and spliting it in two.
-        let (position, offset) = at
-        let at' = (position, 0)
-        let (left, leftId, right, rightId) = split blocks (offset-1) at' (Map.find at' blocks)
-        let blocks' =
-          blocks
-          |> Map.add leftId left
-          |> Map.add rightId right
-        remove blocks' at length
-      | Some block ->
-        match block.Body with
-        | Data d when d.Length = length -> Map.add at { block with Body = Tombstone length} blocks
-        | Data d when d.Length > length ->
-          // Block was found but it's longer than requested removal length. We need to split 
-          // it in two and then tombstone the left part.
-          let (left, leftId, right, rightId) = split blocks (length-1) at block
-          blocks
-          |> Map.add leftId { left with Body = Tombstone length }
-          |> Map.add rightId right
-        | Data d ->
-          // Block was found, but it's shorter than requested removal length - it means that it was
-          // subject to split due to insert/remove operation that happened concurrently. Tomstone 
-          // entire block, then proceed through `Link` to the next block, to tombstone a remaining part. 
-          let remaining = length - d.Length
-          let blocks' = Map.add at { block with Body = Tombstone d.Length } blocks
-          remove blocks' block.Link.Value remaining
-        | Tombstone len when len >= length -> blocks // idempotent do-nothing
-        | Tombstone len ->
-          remove blocks block.Link.Value (len - length)
-
-    match op with
-    | Insert(value, at, after) ->
-      match Map.tryFind after blocks with
-      | Some prev ->
-        // Current insert fits perfectly after existing block. We can simply insert current block
-        // between the `prev` and `prev`'s successor.
-        let block = { Body = Data value; Next = prev.Next; Link = None }
-        let prev' = { prev with Next = Some at }
-        let blocks' =
-          blocks
-          |> Map.add after prev'
-          |> Map.add at block
-        let atSeqNr = fst (fst at)
-        RGA(max seqNr atSeqNr, blocks')
-      | None ->
-        // Current insert is happening somewhere in the middle of existing block. In that case,
-        // we need to find that block and split it in two, then insert current block between
-        // the splits.
-        let (position, offset) = after
-        let at' = (position, 0)
-        let (left, leftId, right, rightId) = split blocks offset at' (Map.find at' blocks)
-        let block = { Body = Data value; Next = Some rightId; Link = None }
-        let blocks' =
-          blocks
-          |> Map.add leftId { left with Next = Some at }
-          |> Map.add at block
-          |> Map.add rightId right
-        let atSeqNr = fst (fst at)
-        RGA(max seqNr atSeqNr, blocks')
-    | Remove(at, length) ->
-      let blocks' = remove blocks at length
-      RGA(seqNr, blocks')
+    let private crdt (replicaId: ReplicaId) : Crdt<Rga<'a>, 'a[], Command<'a>, Operation<'a>> =
+        { new Crdt<_,_,_,_> with
+            member _.Default =
+                let head = { Ptr = { Position = (0,""); Offset = 0 }; Data = Tombstone 0 }
+                { Sequencer = (0,replicaId); Blocks = [| head |] }            
+            member _.Query rga = rga.Blocks |> Array.collect (fun block -> match block.Data with Content data -> data | _ -> [||])        
+            member _.Prepare(rga, cmd) =
+                match cmd with
+                | Insert(idx, slice) ->
+                    let (index, offset) = findByIndex idx rga.Blocks
+                    let ptr = rga.Blocks.[index].Ptr 
+                    let at = nextSeqNr rga.Sequencer
+                    Inserted({ ptr with Offset = ptr.Offset+offset }, at, slice)
+                | RemoveAt(idx, count) -> 
+                    let slices = sliceBlocks idx count rga.Blocks
+                    Removed slices
+                    
+            member _.Effect(rga, e) =
+                match e.Data with
+                | Inserted(after, at, slice) ->
+                    let (index, split) = findByPositionOffset after rga.Blocks
+                    let indexAdjusted = shift (index+1) at rga.Blocks
+                    let block = rga.Blocks.[index]
+                    let newBlock = { Ptr = { Position = at; Offset = 0}; Data = Content slice }
+                    let (left, right) = Block.split split block
+                    let (seqNr, replicaId) = rga.Sequencer
+                    let nextSeqNr = (max (fst at) seqNr, replicaId) 
+                    let blocks =
+                        rga.Blocks
+                        |> Array.replace index left 
+                        |> Array.insert indexAdjusted newBlock
+                    match right with
+                    | Some right ->
+                        let blocks = blocks |> Array.insert (indexAdjusted+1) right
+                        { Sequencer = nextSeqNr; Blocks = blocks }
+                    | None ->
+                        { Sequencer = nextSeqNr; Blocks = blocks }
+                | Removed(slices) ->
+                    let blocks = filterBlocks slices rga.Blocks                    
+                    { rga with Blocks = blocks }
+        }
+        
+    type Endpoint<'a> = Endpoint<Rga<'a>, Command<'a>, Operation<'a>>
+        
+    /// Used to create replication endpoint handling operation-based RGA protocol.
+    let props db replicaId ctx = replicator (crdt replicaId) db replicaId ctx
+     
+    let insertRange (index: int) (slice: 'a[]) (ref: Endpoint<'a>) : Async<'a[]> = ref <? Command (Insert(index, slice))
+    
+    let removeRange (index: int) (count: int) (ref: Endpoint<'a>) : Async<'a[]> = ref <? Command (RemoveAt(index, count))
+    
+    /// Retrieve the current state of the RGA maintained by the given `ref` endpoint. 
+    let query (ref: Endpoint<'a>) : Async<'a[]> = ref <? Query 

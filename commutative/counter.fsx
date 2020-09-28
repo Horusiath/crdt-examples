@@ -3,27 +3,24 @@
 
 namespace Crdt
 
-#load "../common.fsx"
-
-type Counter = int64
+#load "common.fsx"
+#load "protocol.fsx"
 
 [<RequireQualifiedAccess>]
 module Counter =
-
-  /// Operation to be transmitted and applied by all CRDT `Counter` replicas.
-  type Op = Delta of int64
-
-  /// Default instance of CmRDT counter.
-  let empty: Counter = 0L
-
-  /// Returns a value of CmRDT counter.
-  let value (c: Counter) = c
-
-  /// Returns and operation representing CRDT Counter increment operation.
-  let inc (delta: uint32) = Delta (int64 delta)
-  
-  /// Returns and operation representing CRDT Counter decrement operation.
-  let dec (delta: uint32) = Delta -(int64 delta)
-  
-  /// Applies submitted operation to a CRDT `Counter`.
-  let downstream (c: Counter) (Delta d) = c + d
+    
+    let private crdt =
+        { new Crdt<int64,int64,int64,int64> with
+            member _.Default = 0L
+            member _.Query crdt = crdt
+            member _.Prepare(_, op) = op
+            member _.Effect(counter, e) = counter + e.Data }
+    
+    /// Used to create replication endpoint handling operation-based Counter protocol.
+    let props db replica ctx = replicator crdt db replica ctx
+    
+    /// Increment counter maintainer by given `ref` endpoint by a given delta (can be negative).
+    let inc (by: int64) (ref: Endpoint<int64,int64,int64>) : Async<int64> = ref <? Command by
+    
+    /// Retrieve the current state of the counter maintained by the given `ref` endpoint. 
+    let query (ref: Endpoint<int64,int64,int64>) : Async<int64> = ref <? Query

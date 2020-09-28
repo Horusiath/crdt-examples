@@ -3,23 +3,31 @@
 
 namespace Crdt
 
-#load "../common.fsx"
+open System
 
-type MVReg<'a when 'a: comparison> = MVReg of Set<'a * VTime>
+#load "common.fsx"
+#load "protocol.fsx"
 
-[<RequireQualifiedAccess>]
-module MVReg =
-
-  type Op<'a> = Assign of 'a
-
-  let empty = MVReg Set.empty
-
-  let value (MVReg v) = 
-    if Set.isEmpty v then None
-    else v |> Set.map fst |> Set.minElement
-
-  let assign e = ???
-
-  let downstream (MVReg v) op = 
-    match op with
-    | Assign e -> 
+[<RequireQualifiedAccess>]    
+module MVRegister =
+        
+    type MVRegister<'a> = (VTime * 'a voption) list
+    
+    type Endpoint<'a> = Endpoint<MVRegister<'a>, 'a voption, 'a voption>
+    
+    let private crdt : Crdt<MVRegister<'a>, 'a list, 'a voption, 'a voption> =
+        { new Crdt<_,_,_,_> with
+            member _.Default = []
+            member _.Query crdt =
+                crdt
+                |> List.choose (function (_, ValueSome v) -> Some v | _ -> None)
+            member _.Prepare(_, value) = value
+            member _.Effect(existing, e) =
+                let concurrent =
+                    existing
+                    |> List.filter (fun (vt, _) -> Version.compare vt e.Version = Ord.Cc)
+                (e.Version, e.Data)::concurrent }
+    
+    let props db replica ctx = replicator crdt db replica ctx
+    let updte (value: 'a voption) (ref: Endpoint<'a>) : Async<'a voption> = ref <? Command value
+    let query (ref: Endpoint<'a>) : Async<'a voption> = ref <? Query
