@@ -57,13 +57,6 @@ module ReplicationState =
         | Some ver when e.OriginSeqNr <= ver -> false
         | _ -> (Version.compare e.Version state.Version) > Ord.Eq
         
-[<Interface>]           
-type Db =
-    abstract SaveSnapshot: 's -> Async<unit>
-    abstract LoadSnapshot: unit -> Async<'s option>
-    abstract LoadEvents: startSeqNr:uint64 -> AsyncSeq<Event<'e>>
-    abstract SaveEvents: events:Event<'e> seq -> Async<unit>
-
 /// Use database `cursor` to read up to `count` elements and send them to the `target` as Recovered message.
 /// Send only entries that have keys starting with a given `prefix` (eg. events belonging to specific nodeId).
 /// Use `filter` to skip events that have been seen by the `target`. 

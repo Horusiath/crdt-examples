@@ -3,7 +3,10 @@
 
 namespace Crdt
 
+#r "nuget: FSharp.Control.AsyncSeq"
 #load "../common.fsx"
+
+open FSharp.Control
 
 /// A contaienr for user-defined events of type 'e. It contains metadata necessary
 /// to partially order and distribute events in peer-to-peer fashion. 
@@ -35,3 +38,31 @@ type Crdt<'crdt,'state,'cmd,'event> =
     abstract Prepare: state:'crdt * command:'cmd -> 'event
     /// Equivalent of event handler in eventsourcing analogy.
     abstract Effect: state:'crdt * event:Event<'event> -> 'crdt
+    
+[<Interface>]           
+type Db =
+    abstract SaveSnapshot: 's -> Async<unit>
+    abstract LoadSnapshot: unit -> Async<'s option>
+    abstract LoadEvents: startSeqNr:uint64 -> AsyncSeq<Event<'e>>
+    abstract SaveEvents: events:Event<'e> seq -> Async<unit>
+    
+type InMemoryDb(replica: ReplicaId) =
+    let snapshot = ref null
+    let mutable events : Map<uint64,obj> = Map.empty
+    interface Db with
+        member _.SaveSnapshot state = async { snapshot := (box state) } 
+        member _.LoadSnapshot<'s>() = async {
+            match !snapshot with
+            | :? 's as state -> return Some state
+            | _ -> return None
+        }
+        member _.LoadEvents<'e>(from) = asyncSeq {
+            for (seqNr, e) in Map.toSeq events do
+                if seqNr >= from then
+                    let casted : Event<'e> = downcast e
+                    yield casted
+        }
+        member _.SaveEvents evts = async {
+            for event in evts do
+                events <- Map.add event.SeqNr (box event) events
+        }
