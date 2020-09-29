@@ -36,6 +36,11 @@ module LSeq =
         interface IComparable with member this.CompareTo other = match other with :? VPtr as vptr -> this.CompareTo(vptr)
         interface IEquatable<VPtr> with member this.Equals other = this.CompareTo other = 0
     
+    (*
+        While this implementation uses ordinary deep-copied array, for practical purposes
+        more feasible option seems to be a mutable tree-like collection, 
+        using eg. combination of B-link and radix trees.
+    *)
     type Vertex<'a> = (VPtr * 'a)
     type LSeq<'a> = Vertex<'a>[]
             
@@ -79,7 +84,7 @@ module LSeq =
             member _.Prepare(lseq, cmd) =
                 match cmd with
                 | Insert(i, value) ->
-                    let left = if Array.isEmpty lseq || i = 0 then [||] else (fst lseq.[i-1]).Sequence  
+                    let left = if i = 0 then [||] else (fst lseq.[i-1]).Sequence  
                     let right = if i = lseq.Length then [||] else (fst lseq.[i]).Sequence
                     let ptr = { Sequence = generateSeq left right; Id = replicaId }
                     Inserted(ptr, value)
