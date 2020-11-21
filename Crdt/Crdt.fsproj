@@ -1,0 +1,44 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>netcoreapp3.1</TargetFramework>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="Prolog.fs" />
+        <Compile Include="convergent\delta\Context.fs" />
+        <Compile Include="convergent\delta\Kernel.fs" />
+        <Compile Include="convergent\delta\MVReg.fs" />
+        <Compile Include="convergent\delta\GCounter.fs" />
+        <Compile Include="convergent\delta\PNCounter.fs" />
+        <Compile Include="convergent\delta\GSet.fs" />
+        <Compile Include="convergent\delta\AWORSet.fs" />
+        <Compile Include="convergent\GCounter.fs" />
+        <Compile Include="convergent\PNCounter.fs" />
+        <Compile Include="convergent\BCounter.fs" />
+        <Compile Include="convergent\LWWReg.fs" />
+        <Compile Include="convergent\GSet.fs" />
+        <Compile Include="convergent\PSet.fs" />
+        <Compile Include="convergent\AWORSet.fs" />
+        <Compile Include="convergent\AWORMap.fs" />
+        <Compile Include="commutative\Common.fs" />
+        <Compile Include="commutative\Rcb.fs" />
+        <Compile Include="commutative\Counter.fs" />
+        <Compile Include="commutative\MVReg.fs" />
+        <Compile Include="commutative\LWWReg.fs" />
+        <Compile Include="commutative\ORSet.fs" />
+        <Compile Include="commutative\LSeq.fs" />
+        <Compile Include="commutative\Rga.fs" />
+        <Compile Include="commutative\BwRga.fs" />
+        <Compile Include="commutative\ORMap.fs" />
+        <Compile Include="commutative\Json.fs" />
+        <Compile Include="commutative\pure\Common.fs" />
+        <Compile Include="commutative\pure\Trcb.fs" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="Akkling" Version="0.10.0" />
+      <PackageReference Include="FSharp.Control.AsyncSeq" Version="3.0.2" />
+    </ItemGroup>
+
+</Project>

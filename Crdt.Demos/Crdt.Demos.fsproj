@@ -1,0 +1,35 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>netcoreapp3.1</TargetFramework>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="convergent\delta\GCounter.fs" />
+        <Compile Include="convergent\delta\PNCounter.fs" />
+        <Compile Include="convergent\delta\MVReg.fs" />
+        <Compile Include="convergent\delta\GSet.fs" />
+        <Compile Include="convergent\delta\AWORSet.fs" />
+        <Compile Include="convergent\GCounter.fs" />
+        <Compile Include="convergent\PNCounter.fs" />
+        <Compile Include="convergent\BCounter.fs" />
+        <Compile Include="convergent\LWWReg.fs" />
+        <Compile Include="convergent\GSet.fs" />
+        <Compile Include="convergent\PSet.fs" />
+        <Compile Include="convergent\AWORSet.fs" />
+        <Compile Include="convergent\AWORMap.fs" />
+        <Compile Include="commutative\Counter.fs" />
+        <Compile Include="commutative\LWWReg.fs" />
+        <Compile Include="commutative\MVReg.fs" />
+        <Compile Include="commutative\ORSet.fs" />
+        <Compile Include="commutative\Json.fs" />
+        <Compile Include="commutative\BwRga.fs" />
+        <Compile Include="Program.fs" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\Crdt\Crdt.fsproj" />
+    </ItemGroup>
+
+</Project>

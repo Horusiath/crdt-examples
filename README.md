@@ -30,4 +30,4 @@ List of CRDTs (implemented and to be implemented):
     - [x] Linear Sequence (L-Seq)
     - [x] Replicated Growable Array (RGA)
     - [x] Replicated Growable Array (blockwise variant)
-    - [ ] JSON-like document
+    - [x] JSON-like document
