@@ -157,13 +157,6 @@ module BWRga =
     /// It takes a list of `slices` which describe the identifiers of specific blocks to be
     /// affected and a number of elements to be tombstoned within each block.
     let private applyRemoved slices blocks =
-        /// Takes a slice and shortens it by moving its pointer offset
-        /// and reducing the length by a given value.
-        let inline shorten by (ptr, length) =
-            let ptr = { ptr with Offset = ptr.Offset + by }
-            let remaining = length - by
-            (ptr, remaining)
-            
         let rec loop (acc: ResizeArray<Block<'a>>) idx slices (blocks: Block<'a>[]) =
             match slices with
             | [] ->
@@ -173,42 +166,40 @@ module BWRga =
             | (ptr, length)::tail ->
                 let block = blocks.[idx]
                 if block.PtrOffset.Ptr = ptr.Ptr then // we found valid block
-                    let currLen = block.Length
-                    if block.PtrOffset.Offset = ptr.Offset then // the beginning of tombstoned block was found
-                        if currLen < length then // current block is shorter than expected, tombstone it and keep remainder
-                            acc.Add (Block.tombstone block)
-                            // we replace current slice with the one having updated offset and remaining length
-                            let remaining = shorten currLen (ptr, length)
-                            loop acc (idx+1) (remaining::tail) blocks
-                        else // current block has exact length is longer than expected, we need to split it and tombstone left side
-                            let (left, right) = Block.split length block
-                            acc.Add (Block.tombstone left)
-                            right |> Option.iter acc.Add // if block has exact length right side of a split will be None
-                            loop acc (idx+1) tail blocks
-                    elif block |> Block.containsOffset ptr.Offset then // the tombstoned slice starts inside of a current block
+                    if block |> Block.containsOffset ptr.Offset then // the tombstoned slice starts inside of a current block
                         // split block, copy over left part
                         let splitIndex = ptr.Offset - block.PtrOffset.Offset
-                        let (left, Some right) = Block.split splitIndex block
-                        acc.Add left
-                        if length > right.Length then // tombstone remainer length is longer than size of a right block
-                            acc.Add (Block.tombstone right)
-                            // update slice to contain remaining length to be tombstoned and repeat
-                            let remaining = shorten right.Length (right.PtrOffset, length)
-                            //let remainer = length - right.Length
-                            //let pos = { ptr with Offset = right.PtrOffset.Offset + right.Length }
-                            loop acc (idx+1) (remaining::tail) blocks
-                        else 
-                            let (del, right) = Block.split length right
-                            acc.Add (Block.tombstone del)
+                        let tombstone =
+                            if splitIndex = 0
+                            then block // beginning of tombstoned block is exactly at the beginning of current one 
+                            else
+                                // beginning of tombstoned block is in the middle of current one
+                                // split it in two and maintain left part
+                                let (left, Some right) = Block.split splitIndex block
+                                acc.Add left
+                                right
+                        if length <= tombstone.Length then 
+                            let (left, right) = Block.split length tombstone
+                            acc.Add (Block.tombstone left)
                             right |> Option.iter acc.Add
                             loop acc (idx+1) tail blocks
+                        else // tombstone length is longer than size of a block
+                            acc.Add (Block.tombstone tombstone)
+                            // update slice to contain remaining length to be tombstoned and repeat
+                            let remaining =
+                                /// Takes a slice and shortens it by moving its pointer offset
+                                /// and reducing the length by a given value.
+                                let ptr = { ptr with Offset = ptr.Offset + tombstone.Length }
+                                let remainingLength = length - tombstone.Length
+                                (ptr, remainingLength)
+                            loop acc (idx+1) (remaining::tail) blocks
                     else    // position ID is correct but offset doesn't fit, we need to move on
                         acc.Add block
                         loop acc (idx+1) slices blocks
                 else // this is not a block we're looking for, just copy it over
                     acc.Add block
                     loop acc (idx+1) slices blocks
-        loop (ResizeArray()) 1 slices blocks
+        loop (ResizeArray()) 1 slices blocks // start from 1 as 0 is RGA head element
         
     let private handleInsert idx items rga =
         let (index, offset) = findByIndex idx rga.Blocks
