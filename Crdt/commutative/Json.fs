@@ -34,9 +34,11 @@ module Json =
     type Json =
         /// An entry which could be resolved into a single primitive type.
         | Value of Primitive
-        | Concurrent of Json list
+        | Concurrent of Json list // a special case for handling concurrent value updates
         | Array of Json[]
         | Obj of Map<string, Json>
+        /// Create JSON-like string out of this one. The only major difference is concurrent case,
+        /// in which concurrent values will be formatted as (<value1> | <value2> | etc.) 
         override this.ToString() =
             let rec stringify (sb: StringBuilder) (json: Json) =
                 match json with
@@ -75,21 +77,34 @@ module Json =
             stringify sb this
             sb.ToString()
     
+    /// Virtual pointer used to uniquely identify array elements. 
     type VPtr = (int64 * ReplicaId)
     
+    /// Just like in case of RGA, vertices are used to mark corresponding insertions with their unique IDs. 
     type Vertex<'a> = (VPtr * 'a)
-         
+        
+    /// Entry is used to mark an operation element with a timestamp. It's also used to keep tombstones
+    /// around - in that case `Value` is None. 
     [<Struct>]   
     type Entry<'a> =
         { Value: 'a option
           Timestamp: VTime }
         
-    and Node =
+    /// Entry kind is used to determine what kind of update do we have there. Since JSON doesn't have
+    /// a static structure, it's possible that the same field will be updated with different data types
+    /// on concurrent operations eg. `x.field = 0` on one node and `x.field = {}` on another one.
+    and EntryKind =
         | Values of Primitive
-        | Array of Vertex<Doc>[]
-        | Object of Map<string, Doc>
-        
-    and Doc = Entry<Node> list
+        | Array of Vertex<Node>[]
+        | Object of Map<string, Node>
+     
+    /// Node represents a single JSON document graph element, be it a primitive value, array item or
+    /// map key-value. Node represents a multi-value register semantics, meaning that in case of
+    /// concurrent updates all of them are stored until conflict is resolved.
+    /// This comes with a special treatment for containers (arrays and maps), which are not duplicated,
+    /// instead their update/remove operations are propagated downwards to leaf nodes. Containers
+    /// maintain add-wins semantics.
+    and Node = Entry<EntryKind> list
         
     [<RequireQualifiedAccess>]
     module Entry =
@@ -100,26 +115,35 @@ module Json =
             { Value = Some value; Timestamp = Version.merge timestamp entry.Timestamp }
         
     [<RequireQualifiedAccess>]
-    module Doc =
+    module Node =
         
-        let empty : Doc = []
+        /// A new empty node.
+        let empty : Node = []
         
-        let getValues (doc: Doc) =
-            doc |> List.choose (fun e -> match e.Value with Some(Values p) -> Some p | _ -> None)
+        /// Returns all values stored in current node. Unless a conflicting update of primive values has
+        /// occurred, this should return a list with 1 element.
+        let getValues (node: Node) =
+            node |> List.choose (fun e -> match e.Value with Some(Values p) -> Some p | _ -> None)
             
-        let getObject (doc: Doc) =
-            doc
+        /// Returns a map object stored under a given node, unless this node doesn't represent map type.
+        let getObject (node: Node) =
+            node
             |> List.choose (fun e -> match e.Value with Some(Object o) -> Some o | _ -> None)
             |> List.tryHead
             
-        let getArray (doc: Doc) =
-            doc
+        /// Returns an array stored under a given node, unless this node doesn't represent array type.
+        let getArray (node: Node) =
+            node
             |> List.choose (fun e -> match e.Value with Some(Array o) -> Some o | _ -> None)
             |> List.tryHead
                     
-        let assign (timestamp: VTime) (value: Primitive) (doc: Doc) : Doc =
+        /// Assigns a primitive value to a current node, using multi-value register semantics. This means
+        /// that all values that are in causal past of provided `timestamp` will be removed (if they are
+        /// primitive values) or tombstoned (if they are container types). Tombstoning is necessary to
+        /// resolve concurrent conflicting nested updates. 
+        let assign (timestamp: VTime) (value: Primitive) (node: Node) : Node =
             let concurrent =
-                doc
+                node
                 |> List.choose (fun e ->
                     match e.Value with
                     | Some(Values x) when Version.compare e.Timestamp timestamp <= Ord.Eq -> None
@@ -129,47 +153,53 @@ module Json =
                 )
             { Value = Some(Values value); Timestamp = timestamp }::concurrent
                         
-        let rec tombstone (timestamps: VTime list) (doc: Doc) : Doc =
-            doc
+        /// Recursively tombstones current node and all of its contents (if it has container kinds like
+        /// array or map) using provided tombstone timestamps. Elements in causal future to provided
+        /// timestamps are not tombstoned, as well as the concurrent ones, meaning this operation
+        /// maintains add wins semantics.
+        let rec tombstone (timestamps: VTime list) (node: Node) : Node =
+            node
             |> List.choose (fun e ->
                 match timestamps |> List.tryFind (fun ts -> Version.compare e.Timestamp ts <= Ord.Eq) with
                 | Some timestamp ->
                     match e.Value with
                     | Some (Values _) -> None
                     | Some (Array a)  ->
-                        let b = a |> Array.map (fun (vptr, doc) -> (vptr, tombstone timestamps doc))
+                        let b = a |> Array.map (fun (vptr, node) -> (vptr, tombstone timestamps node))
                         Some { Timestamp = timestamp; Value = Some (Array b) }
                     | Some (Object a) -> 
-                        let b = a |> Map.map (fun key doc -> tombstone timestamps doc)
+                        let b = a |> Map.map (fun key node -> tombstone timestamps node)
                         Some { Timestamp = timestamp; Value = Some (Object b) }
                     | None -> Some { e with Timestamp = timestamp }
                 | None ->
                     // not found, try deeper
                     match e.Value with
                     | Some (Array a)  ->
-                        let b = a |> Array.map (fun (vptr, doc) -> (vptr, tombstone timestamps doc))
+                        let b = a |> Array.map (fun (vptr, node) -> (vptr, tombstone timestamps node))
                         Some { e with Value = Some (Array b) }
                     | Some (Object a) -> 
-                        let b = a |> Map.map (fun key doc -> tombstone timestamps doc)
+                        let b = a |> Map.map (fun key node -> tombstone timestamps node)
                         Some { e with Value = Some (Object b) }
                     | other -> Some e)
-            
-        let set (modify: Node -> Node option) (timestamp: VTime) (doc: Doc) : Doc =
-            doc
+           
+        /// Helper function used to modify an entry.
+        let set (modify: EntryKind -> EntryKind option) (timestamp: VTime) (node: Node) : Node =
+            node
             |> List.choose (fun e ->
                 match e.Value with
                 | None -> Some { e with Timestamp = Version.max e.Timestamp timestamp }
-                | Some (Values _) when Version.compare e.Timestamp timestamp <= Ord.Eq-> None
+                | Some (Values _) when Version.compare e.Timestamp timestamp <= Ord.Eq -> None
                 | Some other -> modify other |> Option.map (fun o -> { e with Timestamp = Version.max e.Timestamp timestamp; Value = Some o }))
-            
-        let isTombstoned (doc: Doc) = doc |> List.forall (fun e -> Option.isNone e.Value)
+        
+        /// Checks if current node is fully tombstoned.   
+        let isTombstoned (node: Node) = node |> List.forall (fun e -> Option.isNone e.Value)
 
     type Command =
-        | Assign   of Primitive
-        | Update   of key:string * Command
-        | UpdateAt of index:int * Command
-        | InsertAt of index:int * Command
-        | Remove
+        | Assign   of Primitive                // assign primitive value
+        | Update   of key:string * Command     // insert or update entry with a given key in the map component of a node
+        | UpdateAt of index:int * Command      // update existing item at a given index in the array component of a node
+        | InsertAt of index:int * Command      // insert a new item at a given index in the array component of a node
+        | Remove                               // remove current node, doesn't work when combined with `InsertAt`
         
     type Operation =
         | Updated   of key:string * Operation
@@ -178,15 +208,16 @@ module Json =
         | Assigned  of Primitive
         | Removed   of VTime list
         
-    let rec valueOf (doc: Doc) : Json option =
+    /// Materialized a CRDT into a user-friednly JSON-like data type.
+    let rec valueOf (node: Node) : Json option =
         let out =
-            doc
+            node
             |> List.choose (fun e ->
                 match e.Value with
                 | None -> None
                 | Some (Values v) -> Some (Json.Value v)
                 | Some (Array a)  ->
-                    let b = a |> Array.choose (fun (_, doc) -> valueOf doc)
+                    let b = a |> Array.choose (fun (_, node) -> valueOf node)
                     if Array.isEmpty b then None else Some (Json.Array b)
                 | Some (Object a) ->
                     let b =
@@ -202,9 +233,9 @@ module Json =
         
     /// Maps user-given index (which ignores tombstones) into physical index inside of `vertices` array.
     let private indexWithTombstones index vertices =
-        let rec loop offset remaining (vertices: Vertex<Doc>[]) =
+        let rec loop offset remaining (vertices: Vertex<Node>[]) =
             if remaining = 0 then offset
-            elif Doc.isTombstoned (snd vertices.[offset]) then loop (offset+1) remaining vertices // skip over tombstones
+            elif Node.isTombstoned (snd vertices.[offset]) then loop (offset+1) remaining vertices // skip over tombstones
             else loop (offset+1) (remaining-1) vertices
         loop 0 index vertices // skip head as it's always tombstoned (it serves as reference point)
     
@@ -214,7 +245,8 @@ module Json =
             if ptr = fst vertices.[offset] then offset
             else loop (offset+1) ptr vertices
         loop 0 ptr vertices
-        
+       
+    /// Returns a new sequence number for an insert to a given RGA. 
     let nextSeqNr (vertices: Vertex<'a>[]) =
         if Array.isEmpty vertices then 1L
         else
@@ -223,7 +255,10 @@ module Json =
             |> Seq.map (fst>>fst)
             |> Seq.max
             |> (+) 1L
-            
+          
+    /// RGA conditional index shifting - performed when two values where inserted concurrently
+    /// at the same position. In that case we use VPtr of each inserted vertex to deterministally
+    /// define their total position inside of RGA. 
     let rec private shift offset ptr (vertices: Vertex<'a>[]) =
         if offset >= vertices.Length then offset // append at the end
         else
@@ -231,32 +266,32 @@ module Json =
             if next < ptr then offset
             else shift (offset+1) ptr vertices // move insertion point to the right
         
-    let rec handle (replicaId: ReplicaId) (doc: Doc) (cmd: Command) =
+    let rec handle (replicaId: ReplicaId) (node: Node) (cmd: Command) =
         match cmd with
         | Assign value -> Assigned value
-        | Remove -> Removed (doc |> List.map (fun e -> e.Timestamp))
+        | Remove -> Removed (node |> List.map (fun e -> e.Timestamp))
         | Update(key, nested) ->
-            let map = Doc.getObject doc |> Option.defaultValue Map.empty
+            let map = Node.getObject node |> Option.defaultValue Map.empty
             let inner = Map.tryFind key map |> Option.defaultValue []
             Updated(key, handle replicaId inner nested)
         | UpdateAt(idx, nested) ->
-            let array = Doc.getArray doc |> Option.get // we cannot update index at array which doesn't exist
+            let array = Node.getArray node |> Option.get // we cannot update index at array which doesn't exist
             let idx = indexWithTombstones idx array
-            UpdatedAt(fst array.[idx], handle replicaId doc nested)
+            UpdatedAt(fst array.[idx], handle replicaId node nested)
         | InsertAt(_, Remove) -> failwith "cannot insert and remove element at the same time"
         | InsertAt(idx, nested) ->
-            let array = Doc.getArray doc |> Option.defaultValue [||] // we cannot update index at array which doesn't exist
+            let array = Node.getArray node |> Option.defaultValue [||] // we cannot update index at array which doesn't exist
             let idx = indexWithTombstones idx array
             let ptr = (nextSeqNr array, replicaId)
             let prev = if idx >= array.Length then None else Some (fst array.[idx-1])
-            InsertedAt(prev, ptr, handle replicaId doc nested)
+            InsertedAt(prev, ptr, handle replicaId node nested)
             
-    let rec apply replicaId (timestamp: VTime) (doc: Doc) (op: Operation) =
+    let rec apply replicaId (timestamp: VTime) (node: Node) (op: Operation) =
         match op with
-        | Assigned value -> Doc.assign timestamp value doc
-        | Removed timestamps -> Doc.tombstone timestamps doc
+        | Assigned value -> Node.assign timestamp value node
+        | Removed timestamps -> Node.tombstone timestamps node
         | Updated(key, nested) ->
-            let map = doc |> Doc.getObject |> Option.defaultValue Map.empty
+            let map = node |> Node.getObject |> Option.defaultValue Map.empty
             let map' =
                 match Map.tryFind key map with
                 | None ->
@@ -266,30 +301,30 @@ module Json =
                     let inner = apply replicaId timestamp e nested
                     Map.add key inner map
             let concurrent =
-                (timestamp, doc)
-                ||> Doc.set (function
+                (timestamp, node)
+                ||> Node.set (function
                         | Array a  ->
-                            let b = a |> Array.map (fun (vptr, doc) -> (vptr, Doc.tombstone [timestamp] doc))
+                            let b = a |> Array.map (fun (vptr, node) -> (vptr, Node.tombstone [timestamp] node))
                             Some (Array b)
                         | Object _ -> None)
             { Timestamp = timestamp; Value = Some (Object map') }::concurrent
             
         | UpdatedAt(ptr, nested) ->
-            let array = Doc.getArray doc |> Option.defaultValue [||]
+            let array = Node.getArray node |> Option.defaultValue [||]
             let idx = indexOfVPtr ptr array
             let item = apply replicaId timestamp (snd array.[idx]) nested
             let array' = Array.replace idx (ptr, item) array
             let concurrent =
-                (timestamp, doc)
-                ||> Doc.set (function
+                (timestamp, node)
+                ||> Node.set (function
                         | Array a -> None
                         | Object a ->
-                            let b = a |> Map.map (fun k doc -> Doc.tombstone [timestamp] doc)
+                            let b = a |> Map.map (fun k node -> Node.tombstone [timestamp] node)
                             Some (Object b))
             { Timestamp = timestamp; Value = Some (Array array') }::concurrent
             
         | InsertedAt(prev, ptr, nested) ->
-            let array = Doc.getArray doc |> Option.defaultValue [||]
+            let array = Node.getArray node |> Option.defaultValue [||]
             // find index where predecessor vertex can be found
             let predecessorIdx =
                 match prev with
@@ -303,23 +338,23 @@ module Json =
             let item = apply replicaId timestamp [] nested
             let array' = Array.insert insertIdx (ptr, item) array
             let concurrent = 
-                (timestamp, doc)
-                ||> Doc.set (function
+                (timestamp, node)
+                ||> Node.set (function
                         | Array a -> None
                         | Object a ->
-                            let b = a |> Map.map (fun k doc -> Doc.tombstone [timestamp] doc)
+                            let b = a |> Map.map (fun k node -> Node.tombstone [timestamp] node)
                             Some (Object b))
             { Timestamp = timestamp; Value = Some (Array array') }::concurrent
     
-    let private crdt (replicaId: ReplicaId) : Crdt<Doc, Json, Command, Operation> =
+    let private crdt (replicaId: ReplicaId) : Crdt<Node, Json, Command, Operation> =
         { new Crdt<_,_,_,_> with
-            member _.Default = Doc.empty      
-            member _.Query doc = valueOf doc |> Option.defaultValue (Json.Value Primitive.Null) 
-            member _.Prepare(doc, cmd) = handle replicaId doc cmd
-            member _.Effect(doc, e) = apply replicaId e.Version doc e.Data
+            member _.Default = Node.empty      
+            member _.Query node = valueOf node |> Option.defaultValue (Json.Value Primitive.Null) 
+            member _.Prepare(node, cmd) = handle replicaId node cmd
+            member _.Effect(node, e) = apply replicaId e.Version node e.Data
         }
         
-    type Endpoint = Endpoint<Doc, Command, Operation>
+    type Endpoint = Endpoint<Node, Command, Operation>
     
     /// Used to create replication endpoint handling operation-based RGA protocol.
     let props db replicaId ctx = replicator (crdt replicaId) db replicaId ctx
