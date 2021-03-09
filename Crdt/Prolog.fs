@@ -145,6 +145,6 @@ module Array =
         let mutable j = array.Length
         while i < j do
             let half = (i + j) / 2
-            if predicate array.[half] then i <- half + 1
+            if not (predicate array.[half]) then i <- half + 1
             else j <- half
         i

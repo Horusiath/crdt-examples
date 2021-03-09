@@ -5,5 +5,5 @@ open Crdt.Demos
 
 [<EntryPoint>]
 let main argv =
-    CommutativeBwRga.main() |> Async.RunSynchronously
+    CommutativeDoc.main() |> Async.RunSynchronously
     0 // return an integer exit code

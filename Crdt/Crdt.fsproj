@@ -31,14 +31,14 @@
         <Compile Include="commutative\Rga.fs" />
         <Compile Include="commutative\BwRga.fs" />
         <Compile Include="commutative\ORMap.fs" />
-        <Compile Include="commutative\Json.fs" />
+        <Compile Include="commutative\Doc.fs" />
         <Compile Include="commutative\pure\Common.fs" />
         <Compile Include="commutative\pure\Trcb.fs" />
     </ItemGroup>
 
     <ItemGroup>
-      <PackageReference Include="Akkling" Version="0.10.0" />
-      <PackageReference Include="FSharp.Control.AsyncSeq" Version="3.0.2" />
+      <PackageReference Include="Akkling" Version="0.11.0" />
+      <PackageReference Include="FSharp.Control.AsyncSeq" Version="3.0.3" />
     </ItemGroup>
 
 </Project>

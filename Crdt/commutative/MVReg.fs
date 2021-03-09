@@ -16,7 +16,7 @@ module MVRegister =
     let private crdt : Crdt<MVRegister<'a>, 'a list, 'a, 'a> =
         { new Crdt<_,_,_,_> with
             member _.Default = []
-            member _.Query crdt = crdt |> List.map snd
+            member _.Query crdt = crdt |> List.map snd |> List.sort
             member _.Prepare(_, value) = value
             member _.Effect(existing, e) =
                 let concurrent =
@@ -25,5 +25,5 @@ module MVRegister =
                 (e.Version, e.Data)::concurrent }
     
     let props db replica ctx = replicator crdt db replica ctx
-    let update (value: 'a) (ref: Endpoint<'a>) : Async<'a voption> = ref <? Command value
-    let query (ref: Endpoint<'a>) : Async<'a voption> = ref <? Query
+    let update (value: 'a) (ref: Endpoint<'a>) : Async<'a list> = ref <? Command value
+    let query (ref: Endpoint<'a>) : Async<'a list> = ref <? Query
