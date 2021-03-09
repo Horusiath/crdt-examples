@@ -8,75 +8,76 @@ open System.Text
 open Crdt
 open Akkling
 
-module Json =
-  
-  /// Primitive type that can be assigned to a register.
-  type Primitive =
-    | Null
-    | Int of int
-    | Float of float
-    | String of string
-    | Bool of bool
-    static member ($) (_: Primitive, x: int) = Int x
-    static member ($) (_: Primitive, x: float) = Float x
-    static member ($) (_: Primitive, x: string) = String x
-    static member ($) (_: Primitive, x: bool) = Bool x
-    override this.ToString() =
-      match this with
-      | Null -> "null"
-      | String s -> "\"" + s + "\""
-      | Int i -> string i
-      | Float f -> string f
-      | Bool true -> "true"
-      | Bool false -> "false"
+/// Primitive type that can be assigned to a register.
+[<RequireQualifiedAccess>]
+type Primitive =
+  | Null
+  | Int of int
+  | Float of float
+  | String of string
+  | Bool of bool
+  static member ($) (_: Primitive, x: int) = Int x
+  static member ($) (_: Primitive, x: float) = Float x
+  static member ($) (_: Primitive, x: string) = String x
+  static member ($) (_: Primitive, x: bool) = Bool x
+  override this.ToString() =
+    match this with
+    | Null -> "null"
+    | String s -> "'" + s + "'"
+    | Int i -> string i
+    | Float f -> string f
+    | Bool true -> "true"
+    | Bool false -> "false"
       
-  [<RequireQualifiedAccess>]
-  type Json =
-    /// An entry which could be resolved into a single primitive type.
-    | Value of Primitive
-    | Concurrent of Json list // a special case for handling concurrent value updates
-    | Array of Json[]
-    | Obj of Map<string, Json>
-    /// Create JSON-like string out of this one. The only major difference is concurrent case,
-    /// in which concurrent values will be formatted as (<value1> | <value2> | etc.) 
-    override this.ToString() =
-      let rec stringify (sb: StringBuilder) (json: Json) =
-        match json with
-        | Value x -> sb.Append(string x) |> ignore
-        | Array items ->
-          sb.Append "[" |> ignore
-          let mutable e = downcast items.GetEnumerator()
-          if e.MoveNext() then stringify sb (downcast e.Current)
-          while e.MoveNext() do
-            sb.Append ", " |> ignore
-            stringify sb (downcast e.Current)
-          sb.Append "]" |> ignore
-        | Obj map ->
-          sb.Append "{" |> ignore
-          let mutable e = (Map.toSeq map).GetEnumerator()
-          if e.MoveNext() then
-            let (key, value) = e.Current
-            sb.Append('"').Append(key).Append("\": ") |> ignore
-            stringify sb value
-          while e.MoveNext() do
-            sb.Append(", ") |> ignore
-            let (key, value) = e.Current
-            sb.Append('"').Append(key).Append("\": ") |> ignore
-            stringify sb value
-          sb.Append "}" |> ignore
-        | Concurrent values ->
-          sb.Append "(" |> ignore
-          let mutable e = (List.toSeq values).GetEnumerator()
-          if e.MoveNext() then stringify sb e.Current
-          while e.MoveNext() do
-            sb.Append " | " |> ignore
-            stringify sb e.Current
-          sb.Append ")" |> ignore
+[<RequireQualifiedAccess>]
+type Json =
+  /// An entry which could be resolved into a single primitive type.
+  | Value of Primitive
+  | Concurrent of Json list // a special case for handling concurrent value updates
+  | Array of Json[]
+  | Obj of Map<string, Json>
+  /// Create JSON-like string out of this one. The only major difference is concurrent case,
+  /// in which concurrent values will be formatted as (<value1> | <value2> | etc.) 
+  override this.ToString() =
+    let rec stringify (sb: StringBuilder) (json: Json) =
+      match json with
+      | Value x -> sb.Append(string x) |> ignore
+      | Array items ->
+        sb.Append "[" |> ignore
+        let mutable e = downcast items.GetEnumerator()
+        if e.MoveNext() then stringify sb (downcast e.Current)
+        while e.MoveNext() do
+          sb.Append ", " |> ignore
+          stringify sb (downcast e.Current)
+        sb.Append "]" |> ignore
+      | Obj map ->
+        sb.Append "{" |> ignore
+        let mutable e = (Map.toSeq map).GetEnumerator()
+        if e.MoveNext() then
+          let (key, value) = e.Current
+          sb.Append(key).Append(": ") |> ignore
+          stringify sb value
+        while e.MoveNext() do
+          sb.Append(", ") |> ignore
+          let (key, value) = e.Current
+          sb.Append(key).Append(": ") |> ignore
+          stringify sb value
+        sb.Append "}" |> ignore
+      | Concurrent values ->
+        sb.Append "(" |> ignore
+        let mutable e = (List.toSeq values).GetEnumerator()
+        if e.MoveNext() then stringify sb e.Current
+        while e.MoveNext() do
+          sb.Append " | " |> ignore
+          stringify sb e.Current
+        sb.Append ")" |> ignore
+        
+    let sb = StringBuilder()
+    stringify sb this
+    sb.ToString()
+      
+module Doc =
           
-      let sb = StringBuilder()
-      stringify sb this
-      sb.ToString()
-  
   /// Virtual pointer used to uniquely identify array elements. 
   [<Struct;CustomComparison;CustomEquality>]
   type VPtr =
@@ -185,24 +186,24 @@ module Json =
     /// array or map) using provided tombstone timestamps. Elements in causal future to provided
     /// timestamps are not tombstoned, as well as the concurrent ones, meaning this operation
     /// maintains add wins semantics.
-    let rec tombstone (timestamp: VTime) (tombstones: VTime list) (node: Node) : Node option =
+    let rec tombstone (tag: VTime) (node: Node) : Node option =
       let node = node |> List.choose (fun e ->
         match e with
         | Leaf(timestamp, _) ->
-          if tombstones |> List.forall (fun t -> Version.compare timestamp t <= Ord.Eq) then None else Some e
+          if Version.compare timestamp tag <= Ord.Eq then None else Some e
         | Array(timestamps, vertices) ->
-          let isBehind, isConcurrent = relations timestamp timestamps
+          let isBehind, isConcurrent = relations tag timestamps
           if isBehind then None
           elif isConcurrent then
-             let vertices = vertices |> Array.choose (fun (ptr, node) -> tombstone timestamp tombstones node |> Option.map (fun n -> (ptr, n)))
+             let vertices = vertices |> Array.choose (fun (ptr, node) -> tombstone tag node |> Option.map (fun n -> (ptr, n)))
              Some(Array(timestamps, vertices))
           else Some e
         | Object(timestamps, fields) -> 
-          let isBehind, isConcurrent = relations timestamp timestamps
+          let isBehind, isConcurrent = relations tag timestamps
           if isBehind then None
           elif isConcurrent then
             let fields = fields |> Map.fold (fun acc key value ->
-              match tombstone timestamp tombstones value with
+              match tombstone tag value with
               | None -> acc
               | Some v -> Map.add key v acc) Map.empty 
             Some(Object(timestamps, fields))
@@ -242,7 +243,7 @@ module Json =
     | AtKey     of string * Operation
     | AtIndex   of VPtr * Operation
     | Assigned  of Primitive
-    | Removed   of VTime list
+    | Removed
     
   /// Materialized a CRDT into a user-friednly JSON-like data type.
   let rec valueOf (node: Node) : Json option =
@@ -269,7 +270,7 @@ module Json =
   let rec handle (replicaId: ReplicaId) (node: Node) (cmd: Command) =
     match cmd with
     | Assign value -> Assigned value
-    | Remove -> Removed (Node.timestamps node)
+    | Remove -> Removed
     | Update(key, nested) ->
       let map = Node.getObject node |> Option.defaultValue Map.empty
       let inner = Map.tryFind key map |> Option.defaultValue []
@@ -289,10 +290,8 @@ module Json =
   let rec apply replicaId (timestamp: VTime) (node: Node) (op: Operation) : Node =
     match op with
     | Assigned value -> Node.assign timestamp value node
-    | Removed tombstones ->
-      if replicaId = "B" then
-        printfn "Removing %O (timestamp: %O) from node %A" tombstones timestamp node  
-      Node.tombstone timestamp tombstones node |> Option.defaultValue Node.empty
+    | Removed ->  
+      Node.tombstone timestamp node |> Option.defaultValue Node.empty
     | AtKey(key, nested) ->
       let timestamps, map =
         match List.tryFind (function Object _ -> true | _ -> false) node with
@@ -345,7 +344,7 @@ module Json =
    
   /// Inserts an `item` at given index. To insert at head use 0 index,
   /// to push back to a tail of sequence insert at array length. 
-  let request (ref: Endpoint) (cmd: Command) : Async<Json> = ref <? Command cmd
+  let request (cmd: Command) (ref: Endpoint) : Async<Json> = ref <? Command cmd
   
   /// Retrieve an array of elements maintained by the given `ref` endpoint. 
   let query (ref: Endpoint) : Async<Json> = ref <? Query

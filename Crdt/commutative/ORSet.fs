@@ -36,8 +36,8 @@ module ORSet =
                     Removed timestamps
             member _.Effect(orset, e) =
                 match e.Data with
-                | Added(item) -> Set.add (item, e.Version) orset
-                | Removed(versions) -> orset |> Set.filter (fun (_, ts) -> not (Set.contains ts versions)) }
+                | Added item -> Set.add (item, e.Version) orset
+                | Removed versions -> orset |> Set.filter (fun (_, ts) -> not (Set.contains ts versions)) }
     
     /// Used to create replication endpoint handling operation-based ORSet protocol.
     let props db replicaId ctx = replicator crdt db replicaId ctx

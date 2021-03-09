@@ -5,5 +5,5 @@ open Crdt.Demos
 
 [<EntryPoint>]
 let main argv =
-    CommutativeJson.main() |> Async.RunSynchronously
+    CommutativeDoc.main() |> Async.RunSynchronously
     0 // return an integer exit code

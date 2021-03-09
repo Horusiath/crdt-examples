@@ -63,7 +63,7 @@ module ReplicationState =
 /// Use database `cursor` to read up to `count` elements and send them to the `target` as Recovered message.
 /// Send only entries that have keys starting with a given `prefix` (eg. events belonging to specific nodeId).
 /// Use `filter` to skip events that have been seen by the `target`. 
-let replay (nodeId: ReplicaId) (filter: VTime) (target: Endpoint<'s,'c,'e>) (events: AsyncSeq<_>) (count:int) = async {
+let replay (nodeId: ReplicaId) (filter: VTime) (target: Endpoint<'s,'c,'e>) (events: AsyncSeq<_>) (count:int) (ctx: Actor<_>) = async {
     let buf = ResizeArray()
     let mutable cont = count > 0
     let mutable i = 0
@@ -79,10 +79,11 @@ let replay (nodeId: ReplicaId) (filter: VTime) (target: Endpoint<'s,'c,'e>) (eve
             lastSeqNr <- Math.Max(lastSeqNr, e.LocalSeqNr)
         | _ -> cont <- false
     let events = buf.ToArray()
+    logDebugf ctx "replaying %i events to nodeId: %s, filter: %O" events.Length nodeId filter
     target <! Replicated(nodeId, lastSeqNr, events)
 }
     
-let recoverTimeout = TimeSpan.FromSeconds 5.
+let recoverTimeout = TimeSpan.FromMilliseconds 200.
                    
 type ReplicationStatus<'s,'c,'e> =
     { /// Access point for the remote replica.
@@ -107,7 +108,12 @@ let replicator (crdt: Crdt<'crdt,'state,'cmd,'event>) (db: Db) (id: ReplicaId) (
         | Replicate(from, count, filter, sender) ->
             logDebugf ctx "received recover request from %s: seqNr=%i, vt=%O" sender.Path.Name from filter
             let cursor = db.LoadEvents(from)
-            replay state.Id filter sender cursor count |> Async.Start
+            replay state.Id filter sender cursor count ctx |> Async.Start
+            // improvement for faster replication - if we detect that incoming Replicate filter is higher or concurrent
+            // to our local version, then we also send a Replicate request immediately instead of waiting for our round
+            if Version.compare filter state.Version > Ord.Eq then
+                let seqNr = Map.tryFind sender.Path.Name state.Observed |> Option.defaultValue 0UL
+                sender <! Replicate(seqNr, 100, state.Version, ctx.Self)
             return! active db state replicatingNodes ctx 
             
         | Replicated(nodeId, lastSeqNr, [||]) ->

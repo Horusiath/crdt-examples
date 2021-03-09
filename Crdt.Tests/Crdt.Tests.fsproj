@@ -1,0 +1,43 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net5.0</TargetFramework>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Include="convergent\delta\GCounterTests.fs" />
+        <Compile Include="convergent\delta\PNCounterTests.fs" />
+        <Compile Include="convergent\delta\MVRegTests.fs" />
+        <Compile Include="convergent\delta\GSetTests.fs" />
+        <Compile Include="convergent\delta\AWORSetTests.fs" />
+        <Compile Include="convergent\GCounterTests.fs" />
+        <Compile Include="convergent\PNCounterTests.fs" />
+        <Compile Include="convergent\BCounterTests.fs" />
+        <Compile Include="convergent\LWWRegTests.fs" />
+        <Compile Include="convergent\GSetTests.fs" />
+        <Compile Include="convergent\PSetTests.fs" />
+        <Compile Include="convergent\AWORSetTests.fs" />
+        <Compile Include="convergent\AWORMapTests.fs" />
+        <Compile Include="commutative\Prolog.fs" />
+        <Compile Include="commutative\CounterTests.fs" />
+        <Compile Include="commutative\LWWRegTests.fs" />
+        <Compile Include="commutative\MVRegTests.fs" />
+        <Compile Include="commutative\ORSetTests.fs" />
+        <Compile Include="commutative\RGATests.fs" />
+        <Compile Include="commutative\BwRGATests.fs" />
+        <Compile Include="commutative\LSeqTests.fs" />
+        <Compile Include="commutative\DocTests.fs" />
+        <Compile Include="Program.fs" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="Expecto" Version="9.0.2" />
+      <PackageReference Include="Expecto.FsCheck" Version="9.0.2" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\Crdt\Crdt.fsproj" />
+    </ItemGroup>
+
+</Project>

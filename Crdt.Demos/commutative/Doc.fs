@@ -1,23 +1,23 @@
 /// The MIT License (MIT)
 /// Copyright (c) 2018 Bartosz Sypytkowski
 
-module Crdt.Demos.CommutativeJson
+module Crdt.Demos.CommutativeDoc
 
 open Crdt.Commutative
-open Crdt.Commutative.Json
+open Crdt.Commutative.Doc
 open Akkling
 
-let inline (~%%) x = Unchecked.defaultof<Json.Primitive> $ x
+let inline (~%%) x = Unchecked.defaultof<Primitive> $ x
     
 let main () = async {
     use sys = System.create "sys" <| Configuration.parse "akka.loglevel = INFO"
-    let a = spawn sys "A" <| props (Json.props (InMemoryDb "A") "A")
-    let b = spawn sys "B" <| props (Json.props (InMemoryDb "B") "B")
+    let a = spawn sys "A" <| props (Doc.props (InMemoryDb "A") "A")
+    let b = spawn sys "B" <| props (Doc.props (InMemoryDb "B") "B")
     a <! Connect("B", b)
     b <! Connect("A", a)
          
-    let! state1 = request a <| Update ("friends", InsertAt(0, Update("name", Assign (%% "Alice"))))
-    let! state2 = request b <| Update ("friends", InsertAt(0, Update("name", Assign (%% "Bob"))))
+    let! state1 =  request (Update ("friends", InsertAt(0, Update("name", Assign (%% "Alice"))))) a
+    let! state2 =  request (Update ("friends", InsertAt(0, Update("name", Assign (%% "Bob"))))) b
     
     printfn "A after insert: %O" state1 // {friends: [{name: Alice}]}
     printfn "B after insert: %O" state2 // {friends: [{name: Bob}]}
@@ -30,8 +30,8 @@ let main () = async {
     printfn "A stable (1): %O" state1
     printfn "B stable (1): %O" state2
     
-    let! state1 = request a <| Update ("friends", UpdateAt(0, Remove))
-    let! state2 = request b <| Update ("friends", UpdateAt(0, Update("surname", Assign (%% "Dylan"))))
+    let! state1 = request (Update ("friends", UpdateAt(0, Remove))) a
+    let! state2 = request (Update ("friends", UpdateAt(0, Update("surname", Assign (%% "Dylan"))))) b
     
     printfn "A after remove: %O" state1 // {friends: [{name: Alice}]}
     printfn "B after update: %O" state2 // {friends: [{name: Bob, surname: Dylan}, {name: Alice}]}
