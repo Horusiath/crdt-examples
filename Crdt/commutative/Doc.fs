@@ -169,50 +169,37 @@ module Doc =
         | Array(ts, _)  -> ts
         | Object(ts, _) -> ts)
       
-    let private relations (tag: VTime) (timestamps: VTime list) = 
-      let mutable isConcurrent = false
-      let mutable isBehind = true
-      for timestamp in timestamps do
-        match Version.compare timestamp tag with
-        | Ord.Cc ->
-          isConcurrent <- true
-          isBehind <- false
-        | Ord.Gt ->
-          isBehind <- false
-        | _ -> isBehind <- isBehind || true
-      (isBehind, isConcurrent)
-            
     /// Recursively tombstones current node and all of its contents (if it has container kinds like
     /// array or map) using provided tombstone timestamps. Elements in causal future to provided
     /// timestamps are not tombstoned, as well as the concurrent ones, meaning this operation
     /// maintains add wins semantics.
-    let rec removeNode (tag: VTime) (node: Node) : Node option =
+    let rec removeNode (tombstone: VTime) (node: Node) : Node option =
       let node = node |> List.choose (fun e ->
         match e with
         | Leaf(timestamp, _) ->
-          // remove node with timestamp lower than removal tag
-          if Version.compare timestamp tag <= Ord.Eq then None else Some e
+          // remove node with timestamp lower than tombstone
+          if Version.compare timestamp tombstone <= Ord.Eq then None else Some e
         | Array(timestamps, vertices) ->
-          // check if all of array's timestamps are behind removal tag
-          // or if some of them are concurrent
-          let isBehind, isConcurrent = relations tag timestamps
-          if isBehind then None // remove node with lower timestamp
-          elif isConcurrent then
-             // recursivelly check if other array elements need removal
-             let vertices = vertices |> Array.choose (fun (ptr, node) -> removeNode tag node |> Option.map (fun n -> (ptr, n)))
-             Some(Array(timestamps, vertices))
-          else Some e
+          // check if all of array's timestamps are behind tombstone
+          if timestamps |> List.forall (fun ts -> Version.compare ts tombstone < Ord.Eq) then
+            None // remove node with lower timestamp
+          else
+            // recursivelly check if other array elements need removal
+            let vertices =
+              vertices
+              |> Array.choose (fun (ptr, node) -> removeNode tombstone node |> Option.map (fun n -> (ptr, n)))
+            Some(Array(timestamps, vertices))
         | Object(timestamps, fields) -> 
-          let isBehind, isConcurrent = relations tag timestamps
-          if isBehind then None // remove node with lower timestamp
-          elif isConcurrent then
+          // check if all of object's timestamps are behind tombstone
+          if timestamps |> List.forall (fun ts -> Version.compare ts tombstone < Ord.Eq) then
+            None // remove node with lower timestamp
+          else
             // recursivelly check if other object fields needs removal
             let fields = fields |> Map.fold (fun acc key value ->
-              match removeNode tag value with
+              match removeNode tombstone value with
               | None -> acc
               | Some v -> Map.add key v acc) Map.empty 
             Some(Object(timestamps, fields))
-          else Some e
       )
       // if all node entries were removed remove node itself
       if List.isEmpty node then None else Some node
