@@ -186,58 +186,43 @@ module Doc =
     /// array or map) using provided tombstone timestamps. Elements in causal future to provided
     /// timestamps are not tombstoned, as well as the concurrent ones, meaning this operation
     /// maintains add wins semantics.
-    let rec tombstone (tag: VTime) (node: Node) : Node option =
+    let rec removeNode (tag: VTime) (node: Node) : Node option =
       let node = node |> List.choose (fun e ->
         match e with
         | Leaf(timestamp, _) ->
+          // remove node with timestamp lower than removal tag
           if Version.compare timestamp tag <= Ord.Eq then None else Some e
         | Array(timestamps, vertices) ->
+          // check if all of array's timestamps are behind removal tag
+          // or if some of them are concurrent
           let isBehind, isConcurrent = relations tag timestamps
-          if isBehind then None
+          if isBehind then None // remove node with lower timestamp
           elif isConcurrent then
-             let vertices = vertices |> Array.choose (fun (ptr, node) -> tombstone tag node |> Option.map (fun n -> (ptr, n)))
+             // recursivelly check if other array elements need removal
+             let vertices = vertices |> Array.choose (fun (ptr, node) -> removeNode tag node |> Option.map (fun n -> (ptr, n)))
              Some(Array(timestamps, vertices))
           else Some e
         | Object(timestamps, fields) -> 
           let isBehind, isConcurrent = relations tag timestamps
-          if isBehind then None
+          if isBehind then None // remove node with lower timestamp
           elif isConcurrent then
+            // recursivelly check if other object fields needs removal
             let fields = fields |> Map.fold (fun acc key value ->
-              match tombstone tag value with
+              match removeNode tag value with
               | None -> acc
               | Some v -> Map.add key v acc) Map.empty 
             Some(Object(timestamps, fields))
           else Some e
       )
+      // if all node entries were removed remove node itself
       if List.isEmpty node then None else Some node
-    
-    
-    let setObject (modify: Map<string,Node> -> Map<string,Node>) (timestamp: VTime) (node: Node) : Node =
-      node |> List.choose (fun e ->
-        match e with
-        | Object(timestamps, fields) ->
-          let fields = modify fields
-          let concurrent = timestamps |> List.filter (fun ts -> Version.compare ts timestamp = Ord.Cc)
-          Some(Object(timestamp::concurrent, fields))
-        | outdated when Entry.isBefore timestamp outdated -> None
-        | other -> Some other)
-      
-    let setArray (modify: Vertex<Node>[] -> Vertex<Node>[]) (timestamp: VTime) (node: Node) : Node =
-      node |> List.choose (fun e ->
-        match e with
-        | Array(timestamps, vertices) ->
-          let vertices = modify vertices
-          let concurrent = timestamps |> List.filter (fun ts -> Version.compare ts timestamp = Ord.Cc)
-          Some(Array(timestamp::concurrent, vertices))
-        | outdated when Entry.isBefore timestamp outdated -> None
-        | other -> Some other)
 
   type Command =
-    | Assign   of Primitive        // assign primitive value
+    | Assign   of Primitive              // assign primitive value
+    | Remove                             // remove current node, doesn't work when combined with `InsertAt`
     | Update   of key:string * Command   // insert or update entry with a given key in the map component of a node
     | UpdateAt of index:int * Command    // update existing item at a given index in the array component of a node
     | InsertAt of index:int * Command    // insert a new item at a given index in the array component of a node
-    | Remove                 // remove current node, doesn't work when combined with `InsertAt`
     
   type Operation =
     | AtKey     of string * Operation
@@ -272,6 +257,7 @@ module Doc =
     | Assign value -> Assigned value
     | Remove -> Removed
     | Update(key, nested) ->
+      // get Object component of the node or create it
       let map = Node.getObject node |> Option.defaultValue Map.empty
       let inner = Map.tryFind key map |> Option.defaultValue []
       AtKey(key, handle replicaId inner nested)
@@ -281,7 +267,9 @@ module Doc =
       AtIndex(ptr, handle replicaId inner nested)
     | InsertAt(_, Remove) -> failwith "cannot insert and remove element at the same time"
     | InsertAt(i, nested) ->
+      // get Array component of the node or create it
       let array = Node.getArray node |> Option.defaultValue [||]
+      // LSeq generates VPtr based on the VPtrs of the preceding and following indexes
       let left = if i = 0 then [||] else (fst array.[i-1]).Sequence  
       let right = if i = array.Length then [||] else (fst array.[i]).Sequence
       let ptr = { Sequence = generateSeq left right; Id = replicaId }
@@ -290,43 +278,56 @@ module Doc =
   let rec apply replicaId (timestamp: VTime) (node: Node) (op: Operation) : Node =
     match op with
     | Assigned value -> Node.assign timestamp value node
+    
     | Removed ->  
-      Node.tombstone timestamp node |> Option.defaultValue Node.empty
+      Node.removeNode timestamp node |> Option.defaultValue Node.empty
+      
     | AtKey(key, nested) ->
+      // get Object component from the node or create it
       let timestamps, map =
         match List.tryFind (function Object _ -> true | _ -> false) node with
         | Some(Object(timestamps, map)) -> (timestamps, map)
         | _ -> ([], Map.empty)
-      let entry = Map.tryFind key map |> Option.defaultValue []
-      let map = Map.add key (apply replicaId timestamp entry nested) map
+      let innerNode = Map.tryFind key map |> Option.defaultValue []
+      // apply inner event update and update current object
+      let map = Map.add key (apply replicaId timestamp innerNode nested) map
+      // override non-concurrent timestamps of a current object component
       let timestamps = timestamp::(List.filter (fun ts -> Version.compare ts timestamp = Ord.Cc) timestamps)
+      // override non-concurrent entries of a current node
       let concurrent =
         node |> List.choose (fun e ->
           match e with
-          | Object _ -> None // we have object update ready
+          | Object _ -> None // we cover object update separately
           | outdated when Entry.isBefore timestamp outdated -> None
           | other -> Some other)
-      (Object(timestamps, map))::concurrent      
+      // attach modified object entry to result node
+      (Object(timestamps, map))::concurrent
+      
     | AtIndex(ptr, nested) ->
+      // get Array component from the node or create it
       let mutable timestamps, array =
         match List.tryFind (function Array _ -> true | _ -> false) node with
         | Some(Array(timestamps, array)) -> (timestamps, array)
         | _ -> ([], [||])
+      // find index of a given VPtr or index where it should be inserted
       let i = array |> Array.binarySearch (fun (x, _) -> ptr >= x)
-      if i < Array.length array && fst array.[i] = ptr
-      then
+      if i < Array.length array && fst array.[i] = ptr then
+        // we're updating existing node
         array <- Array.copy array // defensive copy for future update
         let (_, entry) = array.[i]
         array.[i] <- (ptr, apply replicaId timestamp entry nested)
       else
+        // we're inserting new node
         let n = (ptr, apply replicaId timestamp Node.empty nested)
         array <- Array.insert i n array
+      // override non-concurrent entries of a current node
       let concurrent =
         node |> List.choose (fun e ->
           match e with
-          | Array _ -> None // we have array update ready
+          | Array _ -> None // we cover array entry update separately
           | outdated when Entry.isBefore timestamp outdated -> None
           | other -> Some other)
+      // attach modified object entry to result node
       (Array(timestamps, array))::concurrent
   
   let private crdt (replicaId: ReplicaId) : Crdt<Node, Json, Command, Operation> =
