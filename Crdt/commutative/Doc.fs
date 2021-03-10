@@ -307,6 +307,8 @@ module Doc =
         // we're inserting new node
         let n = (ptr, apply replicaId timestamp Node.empty nested)
         array <- Array.insert i n array
+      // keep concurrent timestamps of a current object entry
+      let timestamps = timestamp::(List.filter (fun ts -> Version.compare ts timestamp = Ord.Cc) timestamps)
       // override non-concurrent entries of a current node
       let concurrent =
         node |> List.choose (fun e ->
