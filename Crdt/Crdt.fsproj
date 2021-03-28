@@ -34,6 +34,11 @@
         <Compile Include="commutative\Doc.fs" />
         <Compile Include="commutative\pure\Common.fs" />
         <Compile Include="commutative\pure\Trcb.fs" />
+        <Compile Include="commutative\pure\Tscb.fs" />
+        <Compile Include="commutative\pure\Counter.fs" />
+        <Compile Include="commutative\pure\MVRegister.fs" />
+        <Compile Include="commutative\pure\LWWRegister.fs" />
+        <Compile Include="commutative\pure\ORSet.fs" />
     </ItemGroup>
 
     <ItemGroup>

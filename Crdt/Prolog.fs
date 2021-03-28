@@ -36,7 +36,7 @@ module Helpers =
         | None -> v
         | Some v -> v
    
-type VTime = Map<ReplicaId, int64>
+type VTime = Map<ReplicaId, uint64>
 
 [<Interface>]
 type IConvergent<'a> =
@@ -47,7 +47,7 @@ module Version =
 
     let zero: VTime = Map.empty
     
-    let inc r (vv: VTime): VTime = vv |> Helpers.upsert r 1L ((+)1L)
+    let inc r (vv: VTime): VTime = vv |> Helpers.upsert r 1UL ((+)1UL)
 
     let set r ts (vv: VTime): VTime = Map.add r ts vv
 
@@ -63,7 +63,7 @@ module Version =
         let valOrDefault k map =
             match Map.tryFind k map with
             | Some v -> v
-            | None   -> 0L
+            | None   -> 0UL
         let akeys = a |> Map.toSeq |> Seq.map fst |> Set.ofSeq
         let bkeys = b |> Map.toSeq |> Seq.map fst |> Set.ofSeq
         (akeys + bkeys)
