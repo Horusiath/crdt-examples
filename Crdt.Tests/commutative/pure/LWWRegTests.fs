@@ -10,7 +10,7 @@ let tests = testSequencedGroup "pure commutative" <|
             testList "A pure commutative Last-Write-Wins Register" [
     test "should return the latest value" {
         use sys = System.create "sys" <| Configuration.parse "akka.loglevel = INFO"
-        let a = spawn sys "A" <| props (LWWRegister.props (InMemoryDb "A") "A")
+        let a = spawn sys "A" <| props (LWWRegister.props "A")
         
         let state = LWWRegister.query a |> wait
         Expect.equal state ValueNone "new register has no value"
@@ -26,9 +26,9 @@ let tests = testSequencedGroup "pure commutative" <|
     }
 
     test "should propagate commutative updates" {
-        use sys = System.create "sys" <| Configuration.parse "akka.loglevel = DEBUG"
-        let a = spawn sys "A" <| props (LWWRegister.props (InMemoryDb "A") "A")
-        let b = spawn sys "B" <| props (LWWRegister.props (InMemoryDb "B") "B")
+        use sys = System.create "sys" <| Configuration.parse "akka.loglevel = INFO"
+        let a = spawn sys "A" <| props (LWWRegister.props "A")
+        let b = spawn sys "B" <| props (LWWRegister.props "B")
         a <! Connect("B", b)
         b <! Connect("A", a)
         

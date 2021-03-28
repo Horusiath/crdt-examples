@@ -10,7 +10,7 @@ open Crdt.Commutative.Pure
 let tests = testSequencedGroup "pure commutative" <| testList "A pure commutative Counter" [
     test "should update and return values" {            
         use sys = System.create "sys" <| Configuration.parse "akka.loglevel = INFO"
-        let a = spawn sys "A" <| props (Counter.props (InMemoryDb "A") "A")
+        let a = spawn sys "A" <| props (Counter.props "A")
         
         let state = Counter.inc 1L a |> wait
         Expect.equal state 1L "counter state should be 1"
@@ -21,8 +21,8 @@ let tests = testSequencedGroup "pure commutative" <| testList "A pure commutativ
     
     test "should propagate commutative updates" {        
         use sys = System.create "sys" <| Configuration.parse "akka.loglevel = INFO"
-        let a = spawn sys "A" <| props (Counter.props (InMemoryDb "A") "A")
-        let b = spawn sys "B" <| props (Counter.props (InMemoryDb "B") "B")
+        let a = spawn sys "A" <| props (Counter.props "A")
+        let b = spawn sys "B" <| props (Counter.props "B")
         a <! Connect("B", b)
         b <! Connect("A", a)
         

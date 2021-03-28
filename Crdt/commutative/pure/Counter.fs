@@ -8,13 +8,15 @@ open Akkling
 
 let crdt =     
     { new PureCrdt<int64, int64> with
-       member this.Apply(state, delta) = state + delta
        member this.Default = 0L
-       member this.Prune(op, stable, ts) = false
-       member this.Obsoletes(o, n) = false }
+       member this.Obsoletes(o, n) = false
+       member this.Apply(state, ops) =
+           ops
+           |> Seq.map (fun o -> o.Value)
+           |> Seq.fold (+) state }
 
 /// Used to create replication endpoint handling operation-based Counter protocol.
-let props db replica ctx = Replicator.actor crdt db replica ctx
+let props replica ctx = Replicator.actor crdt replica ctx
 
 /// Increment counter maintainer by given `ref` endpoint by a given delta (can be negative).
 let inc (by: int64) (ref: Endpoint<int64,int64>) : Async<int64> = ref <? Submit by

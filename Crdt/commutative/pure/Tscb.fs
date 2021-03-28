@@ -4,7 +4,6 @@ open System
 open Akka.Actor
 open Crdt
 open Akkling
-open FSharp.Control
 
 /// Operation - it carries user data wrapped into metadata that enables determining order of redundant operations
 /// within partially-ordered log.
@@ -52,18 +51,18 @@ module MTime =
     | Some v -> Map.add nodeId (Version.merge version v) m
 
 type Snapshot<'state> =
-    { Stable: Versioned<'state>
+    { Stable: 'state
+      StableVersion: VTime
+      LatestVersion: VTime
       Observed: MTime }
     
 type PureCrdt<'state, 'op> =
     /// Return default (zero) state. Used to initialize CRDT state.
     abstract Default: 'state
-    /// Check if `incoming` operation makes `stable` state obsolete.
-    abstract Prune: incoming:Versioned<'op> * stable:'state * stableTimestamp:VTime -> bool
     /// Check if `old` operation makes `incoming` one redundant.
     abstract Obsoletes: old:Versioned<'op> * incoming:Versioned<'op> -> bool
-    /// Apply operation to a given state.
-    abstract Apply: state:'state * op:'op -> 'state
+    /// Apply `operations` to a given state. All operations are unstable. 
+    abstract Apply: state:'state * operations:Set<Versioned<'op>> -> 'state
 
 type Endpoint<'state,'op> = IActorRef<Protocol<'state, 'op>>
 
@@ -72,7 +71,7 @@ and Protocol<'state,'op> =
     | Connect          of ReplicaId * Endpoint<'state,'op>  // connect to given replica
     | Replicate        of ReplicaId * VTime                 // request to replicate operations starting from given vtime
     | Reset            of from:ReplicaId * Snapshot<'state> // reset state at current replica to given snapshot
-    | Replicated       of from:ReplicaId * Versioned<'op>[] // replicate a batch of operations from given node
+    | Replicated       of from:ReplicaId * Set<Versioned<'op>> // replicate a batch of operations from given node
     | ReplicateTimeout of ReplicaId                         // `Replicate` request has timed out
     | Submit           of 'op                               // submit a new operation
     //| Evict            of ReplicaId                       // kick out node from cluster, its replication events will no longer be validated 
@@ -81,25 +80,16 @@ and Protocol<'state,'op> =
 type State<'state,'op> =
     { /// Id of current replica.
       Id: ReplicaId
-      /// The stable timestamp.
-      Stable: Versioned<'state>
-      // Unstable operations waiting to stabilize.
+      /// Stable operations.
+      Stable: 'state
+      /// Unstable operations waiting to stabilize.
       Unstable: Set<Versioned<'op>>
+      StableVersion: VTime
       LatestVersion: VTime
       /// Matrix clock of all observed vector clocks received from incoming replicas.
       Observed: MTime
       /// Active connections to other replicas.
       Connections: Map<ReplicaId, (Endpoint<'state, 'op> * ICancelable)> }
- 
-type DbEntry<'state,'op> =
-    | Snapshot of Snapshot<'state>
-    | Op of Versioned<'op>
-        
-type Db =
-    abstract GetSnapshot: unit -> Async<Snapshot<'state> option>
-    abstract GetOperations: filter:VTime -> AsyncSeq<Versioned<'op>>
-    abstract Store: DbEntry<'state,'op> seq -> Async<unit>
-    abstract Prune: VTime -> Async<unit>
     
 module Replicator =
     
@@ -112,91 +102,95 @@ module Replicator =
         { state with Connections = Map.add nodeId (target, timeout) state.Connections }
         
     let stabilize (state: State<'state,'op>) =
-        let stableTimestamp = state.Observed |> MTime.min        
+        let stableTimestamp = Version.min state.LatestVersion (MTime.min state.Observed)         
         let stable, unstable =
             state.Unstable
             |> Set.partition (fun op -> Version.compare op.Version stableTimestamp <= Ord.Eq)
         (stable, unstable, stableTimestamp)
+        
+    let toSnapshot (state: State<_,_>) =
+        { Stable = state.Stable
+          LatestVersion = state.LatestVersion
+          StableVersion = state.StableVersion
+          Observed = state.Observed }
+        
+    let apply (crdt: PureCrdt<'state,'op>) (state: State<'state,'op>) =
+        if Set.isEmpty state.Unstable
+        then state.Stable
+        else crdt.Apply(state.Stable, state.Unstable)
     
-    let actor (crdt: PureCrdt<'state,'op>) (db: Db) (id: ReplicaId) (ctx: Actor<Protocol<'state,'op>>) =
-        let rec active (crdt: PureCrdt<'state,'op>) (db: Db) (state: State<'state,'op>) (ctx: Actor<Protocol<'state,'op>>) = actor {
+    let actor (crdt: PureCrdt<'state,'op>) (id: ReplicaId) (ctx: Actor<Protocol<'state,'op>>) =
+        let rec active (crdt: PureCrdt<'state,'op>) (state: State<'state,'op>) (ctx: Actor<Protocol<'state,'op>>) = actor {
             match! ctx.Receive() with
             | Connect(nodeId, target) ->
-                target <! Replicate(state.Id, state.LatestVersion)
+                //target <! Replicate(state.Id, state.LatestVersion)
                 Map.tryFind nodeId state.Connections |> Option.iter (fun (_, t) -> t.Cancel())
                 let timeout = ctx.Schedule replicateTimeout ctx.Self (ReplicateTimeout nodeId)
                 let state = { state with Connections = Map.add nodeId (target, timeout) state.Connections }
-                return! active crdt db state ctx
+                return! active crdt state ctx
                 
             | Query ->
-                let reply = state.Unstable |> Set.fold (fun acc op -> crdt.Apply(acc, op.Value)) state.Stable.Value
-                ctx.Sender() <! reply                
-                logDebugf ctx "query (stable: %O, unstable: %O) => %O" state.Stable state.Unstable reply
-                return! active crdt db state ctx
+                let result = apply crdt state
+                ctx.Sender() <! result            
+                logDebugf ctx "query (stable: %O, unstable: %O) => %O" state.Stable state.Unstable result
+                return! active crdt state ctx
                 
             | Replicate(nodeId, filter) ->
                 let (replyTo, _) = Map.find nodeId state.Connections
-                match Version.compare filter state.Stable.Version with
-                | Ord.Lt -> replyTo <! Reset(id, { Stable = state.Stable; Observed = state.Observed })
+                match Version.compare filter state.StableVersion with
+                | Ord.Lt -> replyTo <! Reset(id, toSnapshot state)
                 | _ -> ()
                 
                 let ops =
                     state.Unstable
-                    |> Seq.filter (fun op -> Version.compare op.Version filter > Ord.Eq) // get greater than or concurrent versions
-                    |> Seq.toArray
+                    |> Set.filter (fun op -> Version.compare op.Version filter > Ord.Eq) // get greater than or concurrent versions
                 replyTo <! Replicated(id, ops)
                 
-                logDebugf ctx "received replicate request with timestamp %O. Sending %i ops." filter (Array.length ops)
-                return! active crdt db state ctx
+                logDebugf ctx "received replicate request with timestamp %O. Sending %i ops." filter (Set.count ops)
+                return! active crdt state ctx
             
             | ReplicateTimeout nodeId ->
                 logDebugf ctx "replicate request timed out. Retrying"
                 let (target,_) = Map.find nodeId state.Connections
                 target <! Replicate(state.Id, state.LatestVersion)
                 let state = refreshTimeout nodeId state ctx 
-                return! active crdt db state ctx
+                return! active crdt state ctx
             
-            | Reset(nodeId, snapshot) when Version.compare snapshot.Stable.Version state.LatestVersion = Ord.Gt ->
-                logDebugf ctx "reset state from %O: %O" nodeId snapshot.Stable.Version 
+            | Reset(nodeId, snapshot) when Version.compare snapshot.StableVersion state.LatestVersion = Ord.Gt ->
+                logDebugf ctx "reset state from %O: %O" nodeId snapshot.StableVersion 
                 let state =
                     { state with
                         Stable = snapshot.Stable
+                        StableVersion = snapshot.StableVersion
+                        LatestVersion = Version.merge state.LatestVersion snapshot.StableVersion
                         Observed = MTime.merge snapshot.Observed state.Observed }
-                return! active crdt db state ctx
+                return! active crdt state ctx
                     
             | Reset(nodeId, snapshot) ->
-                logErrorf ctx "received Reset from %O with version: %O (local version: %O). Ignoring." nodeId snapshot.Stable.Version state.LatestVersion
-                return! active crdt db state ctx
+                logErrorf ctx "received Reset from %O with version: %O (local version: %O). Ignoring." nodeId snapshot.StableVersion state.LatestVersion
+                return! active crdt state ctx
                         
             | Replicated(nodeId, ops) ->
                 let mutable state = state
-                let batch = ResizeArray()
-                for op in ops |> Array.filter (fun op -> Version.compare op.Version state.LatestVersion > Ord.Eq) do
+                for op in ops |> Set.filter (fun op -> Version.compare op.Version state.LatestVersion > Ord.Eq) do
                     let observed = state.Observed |> MTime.update nodeId op.Version
-                    let incomingObsolete = state.Unstable |> Set.exists(fun o -> crdt.Obsoletes(o, op))
-                    let stableObsolete = crdt.Prune(op, state.Stable.Value, state.Stable.Version)
-                    let unstable = if incomingObsolete then state.Unstable else Set.add op state.Unstable
+                    let obsolete = state.Unstable |> Set.exists(fun o -> crdt.Obsoletes(o, op))
+                    let pruned = state.Unstable |> Set.filter (fun o -> not (crdt.Obsoletes(op, o)))
+                    let unstable = if obsolete then pruned else Set.add op pruned
                     state <- { state with
                                  Observed = observed
                                  Unstable = unstable
                                  LatestVersion = Version.merge op.Version state.LatestVersion }
-                    logDebugf ctx "received %s operation: %O" (if incomingObsolete then "redundant" else "actual") op 
-                    batch.Add (Op op)
-                let stabilized, unstable, stableVersion = stabilize state
+                let stableOps, unstableOps, stableVersion = stabilize state
                 let state =
-                    if not (Set.isEmpty stabilized) then
-                        logDebugf ctx "stabilized over %O (stable: %O, unstable: %i)" stableVersion (Set.count stabilized) (Set.count unstable) 
-                        let s = stabilized |> Set.fold (fun acc op -> crdt.Apply(acc, op.Value)) state.Stable.Value
-                        let date = stabilized |> Seq.map (fun op -> op.Timestamp) |> Seq.max
-                        let stable = { Version = stableVersion; Timestamp = date; Origin = id; Value = s }
-                        batch.Add (Snapshot { Stable = stable; Observed = state.Observed })
-                        { state with Unstable = unstable; Stable = stable }
+                    if not (Set.isEmpty stableOps) then
+                        logDebugf ctx "stabilized over %O (stable: %O, unstable: %O) - matrix: %O" stableVersion (stableOps) (unstableOps) state.Observed
+                        let stable = crdt.Apply(state.Stable, stableOps)
+                        { state with Stable = stable; Unstable = unstableOps; StableVersion = stableVersion }
                     else
                         state
-                do! db.Store batch
-                do! db.Prune stableVersion
                 let state = refreshTimeout nodeId state ctx
-                return! active crdt db state ctx
+                return! active crdt state ctx
             
             | Submit op ->
                 let sender = ctx.Sender()
@@ -206,58 +200,19 @@ module Replicator =
                       Value = op
                       Timestamp = DateTime.UtcNow
                       Origin = id }
-                do! db.Store [|Op versioned|]
-                let state = { state with Unstable = Set.add versioned state.Unstable; LatestVersion = version }
-                let reply = state.Unstable |> Set.fold (fun acc op -> crdt.Apply(acc, op.Value)) state.Stable.Value
+                let pruned = state.Unstable |> Set.filter (fun o -> not (crdt.Obsoletes(versioned, o)))
+                let state = { state with Unstable = Set.add versioned pruned; LatestVersion = version }
+                let reply = apply crdt state
                 logDebugf ctx "submitted operation %O at timestamp %O - state after application: %O" op version reply 
                 sender <! reply
-                return! active crdt db state ctx }
+                return! active crdt state ctx }
         
-        and recovering (crdt: PureCrdt<'state,'op>) (db: Db) (state: State<'state,'op>) (ctx: Actor<Protocol<'state,'op>>) = actor {
-            match! ctx.Receive() with
-            | Reset(sender, snapshot) when sender = state.Id ->
-                let state =
-                    { state with
-                        Stable = snapshot.Stable
-                        Observed = snapshot.Observed }
-                return! recovering crdt db state ctx
-            | Replicated(sender, ops) when sender = state.Id ->
-                let state =
-                    ops
-                    |> Array.fold (fun acc op ->
-                        if op.Origin = state.Id then
-                            { acc with Unstable = Set.add op acc.Unstable; LatestVersion = Version.merge op.Version acc.LatestVersion }
-                        else
-                            { acc with
-                                Unstable = Set.add op acc.Unstable
-                                Observed = MTime.update op.Origin op.Version acc.Observed }
-                    ) state
-                return! recovering crdt db state ctx
-            | ReplicateTimeout sender when sender = state.Id ->
-                ctx.UnstashAll()
-                return! active crdt db state ctx
-            | _ ->
-                ctx.Stash()
-                return! recovering crdt db state ctx }
-        
-        Async.Start(async {
-            let! snapshot = db.GetSnapshot()
-            snapshot |> Option.iter (fun s -> ctx.Self <! Reset(id, s))
-            let buf = ResizeArray 30
-            for op in db.GetOperations Version.zero do
-                buf.Add op
-                if buf.Count >= 30 then
-                    ctx.Self <! Replicated(id, buf.ToArray())
-                    buf.Clear()
-            ctx.Self <! ReplicateTimeout id // we use timeout to commit the recovery phase
-        })
-        
-        let init = { Value = crdt.Default; Version = Version.zero; Timestamp = DateTime.MinValue; Origin = id }
         let state =
             { Id = id
-              Stable = init
+              Stable = crdt.Default
+              StableVersion = Version.zero
               LatestVersion = Version.zero
               Unstable = Set.empty
               Observed = Map.empty
               Connections = Map.empty }
-        recovering crdt db state ctx
+        active crdt state ctx

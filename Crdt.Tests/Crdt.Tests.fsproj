@@ -30,8 +30,8 @@
         <Compile Include="commutative\DocTests.fs" />
         <Compile Include="commutative\pure\Prolog.fs" />
         <Compile Include="commutative\pure\CounterTests.fs" />
-        <Compile Include="commutative\pure\LWWRegTests.fs" />
         <Compile Include="commutative\pure\MVRegTests.fs" />
+        <Compile Include="commutative\pure\LWWRegTests.fs" />
         <Compile Include="commutative\pure\ORSetTests.fs" />
         <Compile Include="Program.fs" />
     </ItemGroup>

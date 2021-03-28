@@ -10,7 +10,7 @@ let tests = testSequencedGroup "pure commutative" <| testList "A pure commutativ
     
     test "should allow to add and remove values" {
         use sys = System.create "sys" <| Configuration.parse "akka.loglevel = INFO"
-        let a = spawn sys "A" <| props (ORSet.props (InMemoryDb "A") "A")
+        let a = spawn sys "A" <| props (ORSet.props "A")
         
         let state = ORSet.add 1 a |> wait
         Expect.equal state (Set.singleton 1) "A returns added value"
@@ -24,8 +24,8 @@ let tests = testSequencedGroup "pure commutative" <| testList "A pure commutativ
     
     test "should prefer adds over removals" {
         use sys = System.create "sys" <| Configuration.parse "akka.loglevel = INFO"
-        let a = spawn sys "A" <| props (ORSet.props (InMemoryDb "A") "A")
-        let b = spawn sys "B" <| props (ORSet.props (InMemoryDb "B") "B")
+        let a = spawn sys "A" <| props (ORSet.props "A")
+        let b = spawn sys "B" <| props (ORSet.props "B")
         a <! Connect("B", b)
         b <! Connect("A", a)
         
