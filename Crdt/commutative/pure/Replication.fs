@@ -8,14 +8,14 @@ open Akka.Actor
 open Crdt
 open Akkling
 
-/// Operation - it carries user data wrapped into metadata that enables determining order of redundant operations
-/// within partially-ordered log.
+/// Operation - it carries user-defined operation wrapped into metadata
+/// that enables determining order of redundant operations within partially-ordered log.
 [<CustomComparison;CustomEquality>]
 type Op<'a> =
-    { Version: VTime
-      Timestamp: DateTime
-      Origin: ReplicaId
-      Value: 'a }
+    { Version: VTime      // version kept for keeping causal order
+      Timestamp: DateTime // wallclock timestamp - useful for LWW and total ordering in case of concurrent versions
+      Origin: ReplicaId   // replica where operation was submitted
+      Value: 'a }         // operation-specific data submitted by user
     member this.Equals(other: Op<'a>) = this.CompareTo(other) = 0
     member this.CompareTo(other: Op<'a>) =
         match Version.compare this.Version other.Version with
@@ -34,37 +34,53 @@ type Op<'a> =
         | :? Op<'a> as t -> this.CompareTo t
         | _ -> failwithf "cannot compare Op to other structure"
 
+/// Matrix clock - keeps information about all recently received versions for each replica.
 type MTime = Map<ReplicaId, VTime>
 
 [<RequireQualifiedAccess>]
 module MTime =
     
+  /// Returns vector version of all observed version in matrix clock, that's causally
+  /// stable (meaning: there are no operations in flight in the system that could be
+  /// concurrent to that vector version).
   let min (m: MTime) : VTime = Map.fold (fun acc _ -> Version.min acc) Version.zero m
+  
+  /// Returns the latest (most up to date) vector version as observed by this matrix clock. 
   let max (m: MTime) : VTime = Map.fold (fun acc _ -> Version.max acc) Version.zero m
   
+  /// Merges two matrix clocks together returning matrix clock with most up to date values.
   let merge (m1: MTime) (m2: MTime) : MTime =
     (m1, m2) ||> Map.fold (fun acc k v ->
       match Map.tryFind k acc with
       | None -> Map.add k v acc
       | Some v2 -> Map.add k (Version.merge v v2) acc)
         
+  /// Updates `version` observed at given `nodeId`, merging it with potentially already existing one.
   let update (nodeId: ReplicaId) (version: VTime) (m: MTime) =
     match Map.tryFind nodeId m with
     | None -> Map.add nodeId version m
     | Some v -> Map.add nodeId (Version.merge version v) m
 
+/// Snapshot of a state at given replica, can be used in two scenarios:
+/// 
+/// 1. It should be persisted when stable state is stabilized.
+/// 2. When new fresh node arrives, it's send before all unstable updates.
+///
+/// Snapshots can cause potential problems as malicious nodes could cause harm by
+/// (on purpose or by accident) calling snapshots with versions concurrent to
+/// stable timestamp. In that case data loss and/or node eviction may be necessary.
 type Snapshot<'state> =
-    { Stable: 'state
-      StableVersion: VTime
-      LatestVersion: VTime
-      Observed: MTime }
+    { Stable: 'state       // stable state of the replica
+      StableVersion: VTime // stable timestamp `Stable` state refers to
+      LatestVersion: VTime // the latest version known to a given replica
+      Observed: MTime }    // the observed universe, used to determine new stable checkpoints
     
 type PureCrdt<'state, 'op> =
     /// Return default (zero) state. Used to initialize CRDT state.
     abstract Default: 'state
     /// Check if `old` operation makes `incoming` one redundant.
     abstract Obsoletes: old:Op<'op> * incoming:Op<'op> -> bool
-    /// Apply `operations` to a given state. All operations are unstable. 
+    /// Apply `operations` to a given `state`. All `operations` are unstable. 
     abstract Apply: state:'state * operations:Set<Op<'op>> -> 'state
 
 type Endpoint<'state,'op> = IActorRef<Protocol<'state, 'op>>
@@ -72,30 +88,26 @@ type Endpoint<'state,'op> = IActorRef<Protocol<'state, 'op>>
 and Protocol<'state,'op> =
     | Query                                                 // get current state from received replica
     | Connect          of ReplicaId * Endpoint<'state,'op>  // connect to given replica
-    | Replicate        of ReplicaId * VTime                 // request to replicate operations starting from given vtime
+    | Replicate        of ReplicaId * VTime                 // request to replicate operations starting from given version
     | Reset            of from:ReplicaId * Snapshot<'state> // reset state at current replica to given snapshot
-    | Replicated       of from:ReplicaId * Set<Op<'op>> // replicate a batch of operations from given node
+    | Replicated       of from:ReplicaId * Set<Op<'op>>     // replicate a batch of operations from given node
     | ReplicateTimeout of ReplicaId                         // `Replicate` request has timed out
     | Submit           of 'op                               // submit a new operation
     //| Evict            of ReplicaId                       // kick out node from cluster, its replication events will no longer be validated 
     //| Evicted          of ReplicaId * stable:VTime        // node was kicked out from the cluster, because it had invalid timestamp
     
 type State<'state,'op> =
-    { /// Id of current replica.
-      Id: ReplicaId
-      /// Stable operations.
-      Stable: 'state
-      /// Unstable operations waiting to stabilize.
-      Unstable: Set<Op<'op>>
-      StableVersion: VTime
-      LatestVersion: VTime
-      /// Matrix clock of all observed vector clocks received from incoming replicas.
-      Observed: MTime
-      /// Active connections to other replicas.
-      Connections: Map<ReplicaId, (Endpoint<'state, 'op> * ICancelable)> }
+    { Id: ReplicaId          // Id of current replica.
+      Stable: 'state         // Stable operations.
+      Unstable: Set<Op<'op>> // Unstable operations waiting to stabilize.
+      StableVersion: VTime   // the last known stable version
+      LatestVersion: VTime   // the most up-to-date version recognized by current node
+      Observed: MTime        // Matrix clock of all observed vector clocks received from incoming replicas.
+      Connections: Map<ReplicaId, (Endpoint<'state, 'op> * ICancelable)> } // Active connections to other replicas.
     
 module Replicator =
     
+    /// Time window in which replicate request are retried.
     let replicateTimeout = TimeSpan.FromMilliseconds 200.
     
     let refreshTimeout nodeId (state: State<_,_>) (ctx: Actor<_>) =
@@ -103,7 +115,10 @@ module Replicator =
         timeout.Cancel()
         let timeout = ctx.Schedule replicateTimeout ctx.Self (ReplicateTimeout nodeId)
         { state with Connections = Map.add nodeId (target, timeout) state.Connections }
-        
+    
+    /// Stabilize current state. It means computing the latest stable timestamp based on current
+    /// knowledge of the system and determining which unstable operations can be considered
+    /// stable according to new stable timestamp. 
     let stabilize (state: State<'state,'op>) =
         let stableTimestamp = Version.min state.LatestVersion (MTime.min state.Observed)         
         let stable, unstable =
@@ -111,12 +126,15 @@ module Replicator =
             |> Set.partition (fun op -> Version.compare op.Version stableTimestamp <= Ord.Eq)
         (stable, unstable, stableTimestamp)
         
+    /// Generates serializable snapshot of a current state. 
     let toSnapshot (state: State<_,_>) =
         { Stable = state.Stable
           LatestVersion = state.LatestVersion
           StableVersion = state.StableVersion
           Observed = state.Observed }
         
+    /// Applies all unstable operations on top of stable state, returning the most actual
+    /// state as know by current node.
     let apply (crdt: PureCrdt<'state,'op>) (state: State<'state,'op>) =
         if Set.isEmpty state.Unstable
         then state.Stable
@@ -141,7 +159,7 @@ module Replicator =
             | Replicate(nodeId, filter) ->
                 let (replyTo, _) = Map.find nodeId state.Connections
                 match Version.compare filter state.StableVersion with
-                | Ord.Lt -> replyTo <! Reset(id, toSnapshot state)
+                | Ord.Lt -> replyTo <! Reset(id, toSnapshot state) // send reset request if remote version is behind our stable
                 | _ -> ()
                 
                 let ops =
@@ -153,7 +171,7 @@ module Replicator =
                 return! active crdt state ctx
             
             | ReplicateTimeout nodeId ->
-                logDebugf ctx "replicate request timed out. Retrying"
+                logDebugf ctx "replicate request timed out. Retrying."
                 let (target,_) = Map.find nodeId state.Connections
                 target <! Replicate(state.Id, state.LatestVersion)
                 let state = refreshTimeout nodeId state ctx 
@@ -175,23 +193,28 @@ module Replicator =
                         
             | Replicated(nodeId, ops) ->
                 let mutable state = state
+                
                 for op in ops |> Set.filter (fun op -> Version.compare op.Version state.LatestVersion > Ord.Eq) do
                     let observed = state.Observed |> MTime.update nodeId op.Version
+                    // check if new incoming operation is not obsolete
                     let obsolete = state.Unstable |> Set.exists(fun o -> crdt.Obsoletes(o, op))
+                    // prune unstable operations, which have been obsoleted by incoming operation
                     let pruned = state.Unstable |> Set.filter (fun o -> not (crdt.Obsoletes(op, o)))
-                    let unstable = if obsolete then pruned else Set.add op pruned
                     state <- { state with
                                  Observed = observed
-                                 Unstable = unstable
+                                 Unstable = if obsolete then pruned else Set.add op pruned
                                  LatestVersion = Version.merge op.Version state.LatestVersion }
+                
+                // check if some of unstable operation have stabilized now    
                 let stableOps, unstableOps, stableVersion = stabilize state
                 let state =
                     if not (Set.isEmpty stableOps) then
-                        logDebugf ctx "stabilized over %O (stable: %O, unstable: %O) - matrix: %O" stableVersion (stableOps) (unstableOps) state.Observed
+                        logDebugf ctx "stabilized over %O (stable: %O, unstable: %O)" stableVersion stableOps unstableOps
                         let stable = crdt.Apply(state.Stable, stableOps)
                         { state with Stable = stable; Unstable = unstableOps; StableVersion = stableVersion }
                     else
                         state
+                        
                 let state = refreshTimeout nodeId state ctx
                 return! active crdt state ctx
             
@@ -203,8 +226,11 @@ module Replicator =
                       Value = op
                       Timestamp = DateTime.UtcNow
                       Origin = id }
+                // prune unstable operations, which have been obsoleted by this operation
                 let pruned = state.Unstable |> Set.filter (fun o -> not (crdt.Obsoletes(versioned, o)))
                 let state = { state with Unstable = Set.add versioned pruned; LatestVersion = version }
+                
+                // respond to a called with new state (not necessary but good for testing)
                 let reply = apply crdt state
                 logDebugf ctx "submitted operation %O at timestamp %O - state after application: %A" op version reply 
                 sender <! reply
