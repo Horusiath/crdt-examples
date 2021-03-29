@@ -9,7 +9,7 @@ open Crdt
 open Akkling
 
 /// Operation - it carries user-defined operation wrapped into metadata
-/// that enables determining order of redundant operations within partially-ordered log.
+/// that enables determining order and redundancy of operations within partially-ordered log.
 [<CustomComparison;CustomEquality>]
 type Op<'a> =
     { Version: VTime      // version kept for keeping causal order
@@ -34,7 +34,7 @@ type Op<'a> =
         | :? Op<'a> as t -> this.CompareTo t
         | _ -> failwithf "cannot compare Op to other structure"
 
-/// Matrix clock - keeps information about all recently received versions for each replica.
+/// Matrix clock - keeps information about all recently received versions from each replica.
 type MTime = Map<ReplicaId, VTime>
 
 [<RequireQualifiedAccess>]
