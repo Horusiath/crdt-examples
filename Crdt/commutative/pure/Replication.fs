@@ -1,3 +1,6 @@
+/// The MIT License (MIT)
+/// Copyright (c) 2018-2021 Bartosz Sypytkowski
+
 namespace Crdt.Commutative.Pure
 
 open System
@@ -8,27 +11,27 @@ open Akkling
 /// Operation - it carries user data wrapped into metadata that enables determining order of redundant operations
 /// within partially-ordered log.
 [<CustomComparison;CustomEquality>]
-type Versioned<'a> =
+type Op<'a> =
     { Version: VTime
       Timestamp: DateTime
       Origin: ReplicaId
       Value: 'a }
-    member this.Equals(other: Versioned<'a>) = this.CompareTo(other) = 0
-    member this.CompareTo(other: Versioned<'a>) =
+    member this.Equals(other: Op<'a>) = this.CompareTo(other) = 0
+    member this.CompareTo(other: Op<'a>) =
         match Version.compare this.Version other.Version with
         | Ord.Cc ->
             let cmp = this.Timestamp.CompareTo other.Timestamp
             if cmp = 0 then this.Origin.CompareTo other.Origin
             else cmp
         | cmp -> int cmp
-    override this.Equals(obj) = match obj with :? Versioned<'a> as op -> this.Equals(op) | _ -> false
+    override this.Equals(obj) = match obj with :? Op<'a> as op -> this.Equals(op) | _ -> false
     override this.GetHashCode() = this.Version.GetHashCode()
     override this.ToString() = sprintf "Versioned<%O, %s, %O, %O>" this.Value this.Origin this.Timestamp.Ticks this.Version
-    interface IEquatable<Versioned<'a>> with member this.Equals other = this.Equals other
-    interface IComparable<Versioned<'a>> with member this.CompareTo other = this.CompareTo other
+    interface IEquatable<Op<'a>> with member this.Equals other = this.Equals other
+    interface IComparable<Op<'a>> with member this.CompareTo other = this.CompareTo other
     interface IComparable with member this.CompareTo other =
         match other with
-        | :? Versioned<'a> as t -> this.CompareTo t
+        | :? Op<'a> as t -> this.CompareTo t
         | _ -> failwithf "cannot compare Op to other structure"
 
 type MTime = Map<ReplicaId, VTime>
@@ -60,9 +63,9 @@ type PureCrdt<'state, 'op> =
     /// Return default (zero) state. Used to initialize CRDT state.
     abstract Default: 'state
     /// Check if `old` operation makes `incoming` one redundant.
-    abstract Obsoletes: old:Versioned<'op> * incoming:Versioned<'op> -> bool
+    abstract Obsoletes: old:Op<'op> * incoming:Op<'op> -> bool
     /// Apply `operations` to a given state. All operations are unstable. 
-    abstract Apply: state:'state * operations:Set<Versioned<'op>> -> 'state
+    abstract Apply: state:'state * operations:Set<Op<'op>> -> 'state
 
 type Endpoint<'state,'op> = IActorRef<Protocol<'state, 'op>>
 
@@ -71,7 +74,7 @@ and Protocol<'state,'op> =
     | Connect          of ReplicaId * Endpoint<'state,'op>  // connect to given replica
     | Replicate        of ReplicaId * VTime                 // request to replicate operations starting from given vtime
     | Reset            of from:ReplicaId * Snapshot<'state> // reset state at current replica to given snapshot
-    | Replicated       of from:ReplicaId * Set<Versioned<'op>> // replicate a batch of operations from given node
+    | Replicated       of from:ReplicaId * Set<Op<'op>> // replicate a batch of operations from given node
     | ReplicateTimeout of ReplicaId                         // `Replicate` request has timed out
     | Submit           of 'op                               // submit a new operation
     //| Evict            of ReplicaId                       // kick out node from cluster, its replication events will no longer be validated 
@@ -83,7 +86,7 @@ type State<'state,'op> =
       /// Stable operations.
       Stable: 'state
       /// Unstable operations waiting to stabilize.
-      Unstable: Set<Versioned<'op>>
+      Unstable: Set<Op<'op>>
       StableVersion: VTime
       LatestVersion: VTime
       /// Matrix clock of all observed vector clocks received from incoming replicas.

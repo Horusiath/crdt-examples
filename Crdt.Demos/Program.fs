@@ -1,6 +1,6 @@
-﻿// Learn more about F# at http://fsharp.org
+﻿/// The MIT License (MIT)
+/// Copyright (c) 2018-2021 Bartosz Sypytkowski
 
-open System
 open Crdt.Demos
 
 [<EntryPoint>]

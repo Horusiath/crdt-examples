@@ -1,5 +1,5 @@
 /// The MIT License (MIT)
-/// Copyright (c) 2018 Bartosz Sypytkowski
+/// Copyright (c) 2018-2021 Bartosz Sypytkowski
 
 [<RequireQualifiedAccess>]
 module Crdt.Commutative.Pure.LWWRegister
@@ -7,7 +7,7 @@ module Crdt.Commutative.Pure.LWWRegister
 open Crdt
 open Akkling
 
-let private comparer (o: Versioned<_>) = struct(o.Timestamp, o.Origin) 
+let private comparer (o: Op<_>) = struct(o.Timestamp, o.Origin) 
 let crdt =
     { new PureCrdt<'t voption, 't> with 
         member this.Default = ValueNone

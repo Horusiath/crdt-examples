@@ -1,5 +1,5 @@
 /// The MIT License (MIT)
-/// Copyright (c) 2018 Bartosz Sypytkowski
+/// Copyright (c) 2018-2021 Bartosz Sypytkowski
 
 module Crdt.Demos.ConvergentGSet
 

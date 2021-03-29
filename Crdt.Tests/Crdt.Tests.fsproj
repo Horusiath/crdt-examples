@@ -33,6 +33,7 @@
         <Compile Include="commutative\pure\MVRegTests.fs" />
         <Compile Include="commutative\pure\LWWRegTests.fs" />
         <Compile Include="commutative\pure\ORSetTests.fs" />
+        <Compile Include="commutative\pure\LSeqTests.fs" />
         <Compile Include="Program.fs" />
     </ItemGroup>
 
