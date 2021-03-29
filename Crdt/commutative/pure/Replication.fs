@@ -26,7 +26,7 @@ type Op<'a> =
         | cmp -> int cmp
     override this.Equals(obj) = match obj with :? Op<'a> as op -> this.Equals(op) | _ -> false
     override this.GetHashCode() = this.Version.GetHashCode()
-    override this.ToString() = sprintf "Versioned<%O, %s, %O, %O>" this.Value this.Origin this.Timestamp.Ticks this.Version
+    override this.ToString() = sprintf "Op<%O, %s, %O, %O>" this.Value this.Origin this.Timestamp.Ticks this.Version
     interface IEquatable<Op<'a>> with member this.Equals other = this.Equals other
     interface IComparable<Op<'a>> with member this.CompareTo other = this.CompareTo other
     interface IComparable with member this.CompareTo other =
@@ -206,7 +206,7 @@ module Replicator =
                 let pruned = state.Unstable |> Set.filter (fun o -> not (crdt.Obsoletes(versioned, o)))
                 let state = { state with Unstable = Set.add versioned pruned; LatestVersion = version }
                 let reply = apply crdt state
-                logDebugf ctx "submitted operation %O at timestamp %O - state after application: %O" op version reply 
+                logDebugf ctx "submitted operation %O at timestamp %O - state after application: %A" op version reply 
                 sender <! reply
                 return! active crdt state ctx }
         
