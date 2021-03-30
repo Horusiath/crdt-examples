@@ -7,7 +7,7 @@ module Crdt.Commutative.Pure.LWWRegister
 open Crdt
 open Akkling
 
-let private comparer (o: Op<_>) = struct(o.Timestamp, o.Origin) 
+let private comparer (o: Event<_>) = struct(o.Timestamp, o.Origin) 
 let crdt =
     { new PureCrdt<'t voption, 't> with 
         member this.Default = ValueNone
