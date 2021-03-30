@@ -9,8 +9,8 @@ open Akkling
 open Crdt.Commutative.Pure
 
 [<Tests>]
-let tests = testSequencedGroup "pure commutative" <|
-            testList "A pure commutative Last-Write-Wins Register" [
+let tests = testSequencedGroup "pure commutative" <| testList "A pure commutative Last-Write-Wins Register" [
+    
     test "should return the latest value" {
         use sys = System.create "sys" <| Configuration.parse "akka.loglevel = INFO"
         let a = spawn sys "A" <| props (LWWRegister.props "A")

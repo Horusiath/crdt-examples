@@ -1,7 +1,6 @@
 /// The MIT License (MIT)
 /// Copyright (c) 2018-2021 Bartosz Sypytkowski
 
-[<System.Obsolete("FIXME: not commutative yet")>]
 module Crdt.Commutative.Pure.LSeq
 
 open Akkling

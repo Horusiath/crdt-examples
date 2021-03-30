@@ -12,6 +12,7 @@ let wait = Async.RunSynchronously
 
 [<Tests>]
 let tests = testSequencedGroup "pure commutative" <| testList "A pure commutative Linear Sequence" [
+    
     test "should allow to add multiple elements on the same position" {
         use sys = System.create "sys" <| Configuration.parse "akka.loglevel = INFO"
         let a = spawn sys "A" <| props (LSeq.props "A")
@@ -31,8 +32,8 @@ let tests = testSequencedGroup "pure commutative" <| testList "A pure commutativ
         Expect.equal s1 s2 "both systems should have their states equal after sync"
     }
     
-    ftest "should allow to add and remove multiple elements on the same position" {
-        use sys = System.create "sys" <| Configuration.parse "akka.loglevel = DEBUG"
+    test "should allow to add and remove multiple elements on the same position" {
+        use sys = System.create "sys" <| Configuration.parse "akka.loglevel = INFO"
         let a = spawn sys "A" <| props (LSeq.props "A")
         let b = spawn sys "B" <| props (LSeq.props "B")
         a <! Connect("B", b)

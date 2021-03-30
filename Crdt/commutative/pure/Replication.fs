@@ -120,7 +120,7 @@ module Replicator =
     /// knowledge of the system and determining which unstable operations can be considered
     /// stable according to new stable timestamp. 
     let stabilize (state: State<'state,'op>) =
-        let stableTimestamp = Version.min state.LatestVersion (MTime.min state.Observed)         
+        let stableTimestamp = MTime.min state.Observed    
         let stable, unstable =
             state.Unstable
             |> Set.partition (fun op -> Version.compare op.Version stableTimestamp <= Ord.Eq)
@@ -190,6 +190,10 @@ module Replicator =
             | Reset(nodeId, snapshot) ->
                 logErrorf ctx "received Reset from %O with version: %O (local version: %O). Ignoring." nodeId snapshot.StableVersion state.LatestVersion
                 return! active crdt state ctx
+               
+            | Replicated(nodeId, ops) when Set.isEmpty ops ->
+                let state = refreshTimeout nodeId state ctx
+                return! active crdt state ctx
                         
             | Replicated(nodeId, ops) ->
                 let mutable state = state
@@ -209,7 +213,7 @@ module Replicator =
                 let stableOps, unstableOps, stableVersion = stabilize state
                 let state =
                     if not (Set.isEmpty stableOps) then
-                        logDebugf ctx "stabilized over %O (stable: %O, unstable: %O)" stableVersion stableOps unstableOps
+                        logDebugf ctx "stabilized state %A over %O (stable: %O, unstable: %O)" state.Stable stableVersion stableOps unstableOps
                         let stable = crdt.Apply(state.Stable, stableOps)
                         { state with Stable = stable; Unstable = unstableOps; StableVersion = stableVersion }
                     else
@@ -228,7 +232,8 @@ module Replicator =
                       Origin = id }
                 // prune unstable operations, which have been obsoleted by this operation
                 let pruned = state.Unstable |> Set.filter (fun o -> not (crdt.Obsoletes(versioned, o)))
-                let state = { state with Unstable = Set.add versioned pruned; LatestVersion = version }
+                let observed = state.Observed |> MTime.update id version
+                let state = { state with Unstable = Set.add versioned pruned; LatestVersion = version; Observed = observed }
                 
                 // respond to a called with new state (not necessary but good for testing)
                 let reply = apply crdt state
