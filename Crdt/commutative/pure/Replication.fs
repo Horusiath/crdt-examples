@@ -170,7 +170,7 @@ module Replicator =
       | Replicate(nodeId, filter) ->
         
         match Map.tryFind nodeId state.Evicted with
-        | Some version when Version.compare filter version > Ord.Eq ->
+        | Some version when Version.compare filter version = Ord.Cc ->
           // inform node about it being evicted
           ctx.Sender() <! Evicted(nodeId, version)
           return! active crdt state ctx
