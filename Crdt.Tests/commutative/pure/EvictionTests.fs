@@ -5,53 +5,52 @@ module Crdt.Tests.Commutative.Pure.EvictionTests
 
 open System.Collections.Concurrent
 open System.Threading
+open System.Threading.Tasks
 open Akka.Actor
+open Crdt.Tests.Convergent.AWORMapTests
 open Expecto
 open Akkling
 open Crdt.Commutative.Pure
 
-type InboxMsg<'op> =
-    | Terminated of IActorRef
-    | Event of Event<'op>
-
-let private inbox (fac: #IActorRefFactory) =
-    let q = ConcurrentQueue<_>()
-    let rec loop (q: ConcurrentQueue<InboxMsg<'op>>) (ctx: Actor<_>) (m: obj) =
-        match m with
-        | :? Event<'op> as e -> q.Enqueue (Event e)
-        | :? Terminated as t -> q.Enqueue (Terminated t.ActorRef)
-        | :? IActorRef as a -> ctx.Watch(a) |> ignore
+let private testListener (sys: ActorSystem) (target: IActorRef<Protocol<int64,int64>>) =
+    let dead = TaskCompletionSource<_>()
+    let rollback = TaskCompletionSource<_>()
+    let rec loop (ctx: Actor<obj>) = actor {
+        match! ctx.Receive() with
+        | :? IActorRef<Protocol<int64,int64>> as target -> monitor ctx target |> ignore
+        | :? Notification<int64,int64> as n ->
+            match n with
+            | Revoked e -> rollback.SetResult(e.Value)
+            | _ -> ()
+        | :? Terminated as t -> dead.SetResult(t.ActorRef)
         | _ -> ()
-        become (loop q ctx)
-        
-    let ref = spawnAnonymous fac <| props (actorOf2 (loop q))
-    (q, ref)
+        return! loop ctx
+    }
+    let actor = spawnAnonymous sys (props loop)
+    target <! Subscribe(retype actor)
+    actor <! box target
+    (dead, rollback)
+    
 
 [<Tests>]
-let tests = testSequencedGroup "pure commutative" <| testList "A pure commutative node eviction" [
+let tests = testSequencedGroup "pure commutative" <| ftestList "A pure commutative node eviction" [
     test "evicted node should publish concurrent events and stop" {
         use sys = System.create "sys" <| Configuration.parse "akka.loglevel = INFO"
-        
-        let (q, i) = inbox sys
-        subscribe (retype i) sys.EventStream |> ignore
         
         let a = spawn sys "A" <| props (Counter.props "A")
         let b = spawn sys "B" <| props (Counter.props "B")
         
-        i <! b
-                
         Counter.inc 1L a |> wait |> ignore
         Counter.inc 2L b |> wait |> ignore
+        
+        let (dead, rollback) = testListener sys b
         
         a <! Connect("B", b)
         a <! Evict "B"
         
-        Thread.Sleep 500
         
-        for msg in q do
-            match msg with
-            | Terminated x -> Expect.equal x (untyped b) "evicted actor should be stopped"
-            | Event e -> Expect.equal e.Value 2L "concurrent event should be evacuated"
+        Expect.equal dead.Task.Result (untyped b) "evicted actor should be stopped"
+        Expect.equal rollback.Task.Result 2L "concurrent event should be revoked"
     }
     
     test "evicted node should be able to reappear after reset" {

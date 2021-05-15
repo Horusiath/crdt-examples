@@ -85,10 +85,35 @@ type PureCrdt<'state, 'op> =
   /// Apply `operations` to a given `state`. All `operations` are unstable and never empty. 
   abstract Apply: state:'state * operations:Set<Event<'op>> -> 'state
 
+/// Configuration which lets us define which specific kind of data are we interested in
+/// when sending a query to obtain the CRDT state.
+type QueryKind =
+  /// Return the latest state version available. This state may not be
+  /// consistent among other replicas as the replication is still in progress.
+  | Latest
+  /// Returns the stable state - consistent among all replicas. If any replica
+  /// is disconnected, the stable state won't be able to move forward to `Latest`
+  /// until it reconnects or will be evicted.
+  | Stable
+  
+/// Notifications will be send to all actors, which subscribe to a Replicator.
+type Notification<'state,'op> =
+  /// Once a new stable timestamp is reached, this notification will be send.
+  | Stable  of state:'state * version:VTime
+  /// Notification send each time a new emitted or replicated event will arrive
+  /// and be processed on the local node.
+  | Emitted of Event<'op>
+  /// This notification will be send only when a node had sent some events
+  /// which were not replicated to another node, which evicted it. In that case
+  /// concurrent events from evicted node will be revoked.
+  | Revoked of Event<'op>
+  
+type Subscriber<'state,'op> = IActorRef<Notification<'state,'op>>
+
 type Endpoint<'state,'op> = IActorRef<Protocol<'state, 'op>>
 
 and Protocol<'state,'op> =
-  | Query                                                 // get current state from received replica
+  | Query            of QueryKind                         // get current state from received replica
   | Connect          of ReplicaId * Endpoint<'state,'op>  // connect to given replica
   | Replicate        of ReplicaId * VTime                 // request to replicate events starting from given version
   | Reset            of from:ReplicaId * Snapshot<'state> // reset state at current replica to given snapshot
@@ -97,6 +122,8 @@ and Protocol<'state,'op> =
   | Submit           of 'op                               // submit a new CRDT-specific operation
   | Evict            of ReplicaId                         // kick out node from cluster, its replication events will no longer be validated 
   | Evicted          of ReplicaId * VTime                 // node was kicked out from the cluster, because it had invalid timestamp
+  | Subscribe        of Subscriber<'state,'op>            // subscribe to `Notification`s send by target replicator 
+  | Unsubscribe      of Subscriber<'state,'op>            // unsubscribe from `Notification`s send by target replicator
   
 type State<'state,'op> =
   { Id: ReplicaId             // Id of current replica.
@@ -105,7 +132,8 @@ type State<'state,'op> =
     StableVersion: VTime      // the last known stable version
     LatestVersion: VTime      // the most up-to-date version recognized by current node
     Observed: MTime           // Matrix clock of all observed vector clocks received from incoming replicas.
-    Evicted: MTime            // Versions at which particular nodes were evicted 
+    Evicted: MTime            // Versions at which particular nodes were evicted
+    Subscribers: Set<Subscriber<'state,'op>> // set of subscribers for data notifications
     Connections: Map<ReplicaId, (Endpoint<'state, 'op> * ICancelable)> } // Active connections to other replicas.
   
 module Replicator =
@@ -137,6 +165,11 @@ module Replicator =
       Observed = state.Observed
       Evicted = state.Evicted }
     
+  /// Sends `notification` to all subscribers.
+  let private notify (state: State<'state,'op>) (notification: Notification<'state,'op>)  =
+    for subscriber in state.Subscribers do
+      subscriber <! notification
+    
   /// Applies all unstable operations on top of stable state, returning the most actual
   /// state as know by current node.
   let private apply (crdt: PureCrdt<'state,'op>) (state: State<'state,'op>) =
@@ -161,10 +194,13 @@ module Replicator =
         let state = { state with Connections = Map.add nodeId (target, timeout) state.Connections }
         return! active crdt state ctx
         
-      | Query ->
+      | Query QueryKind.Latest ->
         let result = apply crdt state
-        ctx.Sender() <! result      
-        logDebugf ctx "query (stable: %O, unstable: %O) => %O" state.Stable state.Unstable result
+        ctx.Sender() <! result
+        return! active crdt state ctx
+        
+      | Query QueryKind.Stable ->
+        ctx.Sender() <! state.Stable
         return! active crdt state ctx
         
       | Replicate(nodeId, filter) ->
@@ -206,6 +242,7 @@ module Replicator =
               LatestVersion = Version.merge state.LatestVersion snapshot.StableVersion
               Observed = MTime.merge snapshot.Observed state.Observed
               Evicted = MTime.merge snapshot.Evicted state.Evicted }
+        notify state (Stable(state.Stable, state.StableVersion))
         return! active crdt state ctx
           
       | Reset(nodeId, snapshot) ->
@@ -242,6 +279,7 @@ module Replicator =
           if not (Set.isEmpty stableOps) then
             logDebugf ctx "stabilized state %A over %O (stable: %O, unstable: %O)" state.Stable stableVersion stableOps unstableOps
             let stable = crdt.Apply(state.Stable, stableOps)
+            notify state (Stable(stable, stableVersion))
             { state with Stable = stable; Unstable = unstableOps; StableVersion = stableVersion }
           else
             state
@@ -269,8 +307,7 @@ module Replicator =
         return! active crdt state ctx
 
       | Evict nodeId ->
-        // increment version to be sure that we won't try to evict over already stable state
-        let version = Version.inc state.Id state.LatestVersion
+        let version = state.LatestVersion
         let msg = Evicted(nodeId, version)
         for e in state.Connections do
           (fst e.Value) <! msg
@@ -286,17 +323,34 @@ module Replicator =
         // evacuate - send all concurrent events to event stream
         for e in state.Unstable do
           if e.Origin = evicted && Version.compare e.Version version = Ord.Cc then
-            EventStreaming.publish e ctx.System.EventStream
+            notify state (Revoked e) 
         return Stop // stop current actor
       
       | Evicted(evicted, version) ->
         let connections = terminateConnection evicted state
-        let unstable = state.Unstable |> Set.filter (fun o -> not (o.Origin = evicted && Version.compare o.Version version = Ord.Cc))
+        let (revoked, unstable) =
+          state.Unstable
+          |> Set.partition (fun o -> o.Origin = evicted && Version.compare o.Version version = Ord.Cc)
+                    
         let state = { state with
                         Evicted = Map.add evicted version state.Evicted
                         Observed = Map.remove evicted state.Observed
                         Connections = connections
                         Unstable = unstable }
+        
+        for e in revoked do
+          notify state (Revoked e)
+          
+        return! active crdt state ctx
+        
+      | Subscribe subscriber ->
+        monitorWith (Unsubscribe subscriber) ctx subscriber |> ignore
+        let state = { state with Subscribers = Set.add subscriber state.Subscribers }
+        subscriber <! Stable(state.Stable, state.StableVersion)
+        return! active crdt state ctx
+        
+      | Unsubscribe subscriber ->
+        let state = { state with Subscribers = Set.remove subscriber state.Subscribers }
         return! active crdt state ctx
     }
     
@@ -308,5 +362,6 @@ module Replicator =
         Unstable = Set.empty
         Observed = Map.empty
         Evicted = Map.empty
+        Subscribers = Set.empty
         Connections = Map.empty }
     active crdt state ctx

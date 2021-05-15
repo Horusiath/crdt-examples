@@ -19,4 +19,4 @@ type Endpoint<'t> = Endpoint<'t list, 't>
     
 let props replica ctx = Replicator.actor crdt replica ctx
 let update (value: 'a) (ref: Endpoint<'a>) : Async<'a list> = ref <? Submit value
-let query (ref: Endpoint<'a>) : Async<'a list> = ref <? Query
+let query (ref: Endpoint<'a>) : Async<'a list> = ref <? Query Latest

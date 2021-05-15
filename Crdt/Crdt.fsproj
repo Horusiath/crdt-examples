@@ -38,6 +38,7 @@
         <Compile Include="commutative\pure\LWWRegister.fs" />
         <Compile Include="commutative\pure\ORSet.fs" />
         <Compile Include="commutative\pure\LSeq.fs" />
+        <Compile Include="commutative\pure\Membership.fs" />
     </ItemGroup>
 
     <ItemGroup>

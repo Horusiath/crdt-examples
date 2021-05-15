@@ -22,4 +22,4 @@ let props replica ctx = Replicator.actor crdt replica ctx
 let inc (by: int64) (ref: Endpoint<int64,int64>) : Async<int64> = ref <? Submit by
 
 /// Retrieve the current state of the counter maintained by the given `ref` endpoint. 
-let query (ref: Endpoint<int64,int64>) : Async<int64> = ref <? Query
+let query (ref: Endpoint<int64,int64>) : Async<int64> = ref <? Query Latest

@@ -31,4 +31,4 @@ let insert (index: int) (item: 'a) (ref: Endpoint<'a>) : Async<'a[]> = ref <? Su
 /// Remove an `item` from the ORSet maintained by the given `ref` endpoint. In case of add/remove conflicts add wins.
 let removeAt (index: int) (ref: Endpoint<'a>) : Async<'a[]> = ref <? Submit (Remove index)
 /// Retrieve the current state of the ORSet maintained by the given `ref` endpoint. 
-let query (ref: Endpoint<'a>) : Async<'a[]> = ref <? Query
+let query (ref: Endpoint<'a>) : Async<'a[]> = ref <? Query Latest
