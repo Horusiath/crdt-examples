@@ -3,6 +3,7 @@
 
 module Crdt.Tests.Commutative.Pure.EvictionTests
 
+open System
 open System.Collections.Concurrent
 open System.Threading
 open System.Threading.Tasks
@@ -33,7 +34,7 @@ let private testListener (sys: ActorSystem) (target: IActorRef<Protocol<int64,in
     
 
 [<Tests>]
-let tests = testSequencedGroup "pure commutative" <| ftestList "A pure commutative node eviction" [
+let tests = testSequencedGroup "pure commutative" <| testList "A pure commutative node eviction" [
     test "evicted node should publish concurrent events and stop" {
         use sys = System.create "sys" <| Configuration.parse "akka.loglevel = INFO"
         
@@ -99,5 +100,51 @@ let tests = testSequencedGroup "pure commutative" <| ftestList "A pure commutati
         let state = ORSet.query a |> wait
         Expect.equal state (Set.ofList ["A";"B";"C"]) "C should be replicated after eviction and reset"
         
+    }
+    
+    test "eviction policy can be used to evict nodes" {
+        use sys = System.create "sys" <| Configuration.parse "akka.loglevel = INFO"
+        
+        let policy id =
+            let mutable count = 0
+            function
+            | Responsive _ ->
+                count <- 0
+                Some (TimeSpan.FromMilliseconds 200.)
+            | TimedOut ts ->
+                count <- count + 1
+                if count = 3 then None // evict node after 3 consecutive timeouts
+                else Some (TimeSpan.FromMilliseconds 200.) 
+            
+        let members id ctx =
+            let config =
+                { Id = id
+                  DefaultReplicationTimeout = TimeSpan.FromMilliseconds 200.
+                  EvictionPolicy = policy }
+            Replicator.actorWith Counter.crdt config ctx
+        
+        let a = spawn sys "A" <| props (members "A")
+        let b = spawn sys "B" <| props (members "B")
+        
+        a <! Connect("B", b)
+        b <! Connect("A", a)
+        
+        
+        let chan = Channels.Channel.CreateUnbounded()
+        let sub = spawnAnonymous sys (props(actorOf (fun msg ->
+            chan.Writer.TryWrite(msg) |> ignored)))
+        a <! Subscribe sub
+        
+        a |> Counter.inc 1L |> wait |> ignore
+        
+        Thread.Sleep 300
+        
+        sys.Stop (untyped b)
+        
+        let next () = chan.Reader.ReadAsync().AsTask().Result
+        
+        Expect.equal (next()) (Stable(0L, Map.empty)) "A starts with stable state at default"
+        Expect.isTrue (match next() with Emitted _ -> true | _ -> false) "A emitted a new event"
+        Expect.equal (next()) (Notification.Evicted("B", Map.ofList["A",1UL])) "A evicted B after period of inactivity"
     }
 ]
