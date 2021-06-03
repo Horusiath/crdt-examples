@@ -143,3 +143,43 @@ let merge (a: Yata<'t>) (b: Yata<'t>) : Yata<'t> =
         then { block with Value = None } // mark block as deleted
         else block
     )
+    
+/// Returns version representing the actual progression and state of Yata array.
+let version (a: Yata<'t>) : VTime =
+    a
+    |> Array.fold (fun vtime block ->
+        let (replicaId, seqNr) = block.Id
+        match Map.tryFind replicaId vtime with
+        | None -> Map.add replicaId seqNr vtime
+        | Some seqNr' -> Map.add replicaId (max seqNr' seqNr) vtime
+    ) Version.zero
+    
+type Delta<'t> = (Yata<'t> * ID[])
+    
+/// Computes delta based on `version` produced by `Yata.version` vector generated
+/// by one peer and state `a` present on another peer. Returned delta is a combination
+/// of Yata array, which contains only blocks that appeared after given `version`
+/// and so called delete set which contains IDs of deleted blocks.
+let delta (version: VTime) (a: Yata<'t>) : Delta<'t> =
+    let deltaArray =
+        a
+        |> Array.filter (fun block ->
+            let (replicaId, seqNr) = block.Id
+            match Map.tryFind replicaId version with
+            | None -> true
+            | Some n -> seqNr > n)
+        
+    // Note: in practical implementation delete set can be compressed.
+    let deleteSet =
+        a
+        |> Array.choose (fun block -> if block.IsDeleted then Some block.Id else None)
+    (deltaArray, deleteSet)
+    
+/// Merges given `delta` from remote into local Yata array `a`. 
+let mergeDelta (delta: Delta<'t>) (a: Yata<'t>) : Yata<'t> =
+    let (b, deleteSet) = delta
+    merge a b
+    |> Array.map (fun block ->
+        if not block.IsDeleted && Array.contains block.Id deleteSet
+        then { block with Value = None } // tombstone block
+        else block)
