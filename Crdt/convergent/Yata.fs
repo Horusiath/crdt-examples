@@ -66,19 +66,17 @@ let rec private findInsertIndex (array: Yata<'t>) block scanning left right dst 
     let dst = if scanning then dst else i
     if i = right || i = Array.length array then dst
     else
-        let other = array.[i]
-        let oleft = other.OriginLeft |> Option.bind (indexOf array) |> Option.defaultValue -1
-        let oright = other.OriginRight |> Option.bind (indexOf array) |> Option.defaultValue array.Length
+        let o = array.[i]
+        let oleft = o.OriginLeft |> Option.bind (indexOf array) |> Option.defaultValue -1
+        let oright = o.OriginRight |> Option.bind (indexOf array) |> Option.defaultValue array.Length
+        let id1 = fst block.Id
+        let id2 = fst o.Id
         
-        if oleft < left then dst // Top row. Insert, insert, arbitrary (insert)
-        elif oleft = left then
-            // middle row
-            let replica1 = fst block.Id
-            let replica2 = fst other.Id
-            if replica1 > replica2 then findInsertIndex array block false left right dst (i+1)
-            elif oright = right then dst
-            else findInsertIndex array block true left right dst (i+1)
-        else findInsertIndex array block scanning left right dst (i+1)
+        if oleft < left || (oleft = left && oright = right && id1 <= id2)
+        then dst
+        else
+            let scanning = if oleft = left then id1 <= id2 else scanning
+            findInsertIndex array block scanning left right dst (i+1)
     
 /// Puts given `block` into an YATA `array` based on the adjacency of its
 /// left and right origins. This behavior is shared between `insert` and `merge` functions.
@@ -106,7 +104,7 @@ let insert (replicaId: ReplicaId) (index: int) (value: 't) (array: Yata<'t>) : Y
     let i = findPosition index array
     let seqNr = 1UL + lastSeqNr replicaId array
     let left = array |> getBlock (i-1) |> Option.map (fun b -> b.Id)
-    let right = array |> getBlock (i+1) |> Option.map (fun b -> b.Id)
+    let right = array |> getBlock i |> Option.map (fun b -> b.Id)
     let block =
         { Id = (replicaId, seqNr)
           OriginLeft = left

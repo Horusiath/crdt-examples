@@ -9,7 +9,7 @@ open Crdt.Convergent
 let private str (array: char[]) = System.String(array)
 
 [<Tests>]
-let tests = testList "A convergent YATA array" [
+let tests = ftestList "A convergent YATA array" [
     test "should insert elements at the beginning" {
         let a =
             Yata.zero
@@ -52,8 +52,7 @@ let tests = testList "A convergent YATA array" [
         Expect.equal actual "acd" "deleted elements should not appear in result set"        
     }
     
-    
-    ftest "should allow to merge elements" {
+    test "should allow to merge elements" {
         let a =
             Yata.zero
             |> Yata.insert "A" 0 'a'
@@ -64,17 +63,17 @@ let tests = testList "A convergent YATA array" [
             a
             |> Yata.insert "B" 1 'd'
             |> Yata.insert "B" 2 'e'
-            
+        
         let a =
             a
             |> Yata.insert "A" 1 'f'
             |> Yata.delete 0
-            
+
         let c1 = Yata.merge a b
         let c2 = Yata.merge b a
             
         let actual = c1 |> Yata.value |> str
-        Expect.equal actual "dfebc" "merged conflicts should be resolved"
+        Expect.equal actual "fdebc" "merged conflicts should be resolved"
         Expect.equal c1 c2 "merge should be commutative"
     }
 ]
