@@ -9,6 +9,7 @@ List of CRDTs (implemented and to be implemented):
         - [x] Grow-only Set
         - [x] Add Wins Observed Remove Set
         - [x] Multi Value Register
+        - [x] YATA
     - [x] Grow-only Counter
     - [x] Positive/Negative Counter
     - [x] Bounded Counter
