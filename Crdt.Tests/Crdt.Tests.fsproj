@@ -19,6 +19,7 @@
         <Compile Include="convergent\PSetTests.fs" />
         <Compile Include="convergent\AWORSetTests.fs" />
         <Compile Include="convergent\AWORMapTests.fs" />
+        <Compile Include="convergent\YataTests.fs" />
         <Compile Include="commutative\Prolog.fs" />
         <Compile Include="commutative\CounterTests.fs" />
         <Compile Include="commutative\LWWRegTests.fs" />

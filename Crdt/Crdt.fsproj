@@ -21,6 +21,7 @@
         <Compile Include="convergent\PSet.fs" />
         <Compile Include="convergent\AWORSet.fs" />
         <Compile Include="convergent\AWORMap.fs" />
+        <Compile Include="convergent\Yata.fs" />
         <Compile Include="commutative\Common.fs" />
         <Compile Include="commutative\Rcb.fs" />
         <Compile Include="commutative\Counter.fs" />
