@@ -120,30 +120,6 @@ let delete (index: int) (blocks: Yata<'t>) : Yata<'t> =
     let tombstoned = { blocks.[i] with Value = None }
     Array.replace i tombstoned blocks
     
-/// Merges two YATA arrays together.
-let merge (a: Yata<'t>) (b: Yata<'t>) : Yata<'t> =
-    // IDs of the blocks that have been tombstoned
-    let tombstones = b |> Array.choose (fun b -> if b.IsDeleted then Some b.Id else None)
-    // IDs of blocks already existing in `a`
-    let ids = a |> Array.map (fun b -> b.Id)
-    let blocks =
-        b
-        // deduplicate repeating entries
-        |> Array.filter (fun block -> not (Array.contains block.Id ids))
-        // since integration function requires blocks to be integrated in
-        // the order of their sequence numbers we need to sort them out
-        |> Array.groupBy (fun block -> fst block.Id)
-        |> Array.collect (fun (_, blocks) ->
-            blocks |> Array.sortBy (fun block -> snd block.Id)
-        )
-    blocks
-    |> Array.fold integrate a
-    |> Array.map (fun block ->
-        if not block.IsDeleted && Array.contains block.Id tombstones
-        then { block with Value = None } // mark block as deleted
-        else block
-    )
-    
 /// Returns version representing the actual progression and state of Yata array.
 let version (a: Yata<'t>) : VTime =
     a
@@ -153,6 +129,58 @@ let version (a: Yata<'t>) : VTime =
         | None -> Map.add replicaId seqNr vtime
         | Some seqNr' -> Map.add replicaId (max seqNr' seqNr) vtime
     ) Version.zero
+    
+let private attach (acc: ResizeArray<_>) map key =
+    match key with
+    | None -> map
+    | Some key ->
+        match Map.tryFind key map with
+        | None -> map
+        | Some value ->
+            acc.Add value
+            Map.remove key map
+ 
+/// Given a `map` of elements to insert, push them on the `stack` with respect
+/// to their dependencies. Return a stack, where top-level dependencies are at the
+/// end of it.
+let rec private deps (map: Map<ID, Block<'t>>) (stack: ResizeArray<_>) (i: int) =
+    if Map.isEmpty map then stack
+    elif stack.Count = i then
+        let block = (Seq.last map).Value
+        let map = Map.remove block.Id map
+        stack.Add block
+        let map = attach stack map block.OriginLeft
+        let map = attach stack map block.OriginRight
+        deps map stack (i+1)
+    else
+        let block = stack.[i]
+        let map = attach stack map block.OriginLeft
+        let map = attach stack map block.OriginRight
+        deps map stack (i+1)
+
+/// Merges two YATA arrays together.
+let merge (a: Yata<'t>) (b: Yata<'t>) : Yata<'t> =
+    // IDs of the blocks that have been tombstoned
+    let tombstones = b |> Array.choose (fun b -> if b.IsDeleted then Some b.Id else None)
+    // IDs of blocks already existing in `a`
+    let ids = a |> Array.map (fun b -> b.Id) |> Set.ofArray
+    let toMerge =
+        b
+        // deduplicate blocks already existing in current array `a`
+        |> Array.filter (fun block -> not (Set.contains block.Id ids))
+        |> Array.map (fun block -> (block.Id, block))
+        |> Map.ofArray
+        
+    let deps = deps toMerge (ResizeArray()) 0
+            
+    deps
+    |> Seq.rev
+    |> Seq.fold integrate a
+    |> Array.map (fun block ->
+        if not block.IsDeleted && Array.contains block.Id tombstones
+        then { block with Value = None } // mark block as deleted
+        else block
+    )
     
 type Delta<'t> = (Yata<'t> * ID[])
     
