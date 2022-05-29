@@ -9,7 +9,7 @@ open Crdt.Convergent
 let private str (array: char[]) = System.String(array)
 
 [<Tests>]
-let tests = ftestList "A convergent YATA array" [
+let tests = testList "A convergent YATA array" [
     test "should insert elements at the beginning" {
         let a =
             Yata.zero

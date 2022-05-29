@@ -33,12 +33,14 @@
         <Compile Include="commutative\BwRga.fs" />
         <Compile Include="commutative\ORMap.fs" />
         <Compile Include="commutative\Doc.fs" />
+        <Compile Include="commutative\Cure.fs" />
         <Compile Include="commutative\pure\Replication.fs" />
         <Compile Include="commutative\pure\Counter.fs" />
         <Compile Include="commutative\pure\MVRegister.fs" />
         <Compile Include="commutative\pure\LWWRegister.fs" />
         <Compile Include="commutative\pure\ORSet.fs" />
         <Compile Include="commutative\pure\LSeq.fs" />
+        <Compile Include="commutative\pure\RTree.fs" />
     </ItemGroup>
 
     <ItemGroup>
