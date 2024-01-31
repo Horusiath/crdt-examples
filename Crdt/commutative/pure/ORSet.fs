@@ -23,7 +23,7 @@ let crdt =
             match n.Value, o.Value with
             | Add v2, Add v1 when Version.compare n.Version o.Version = Ord.Lt -> v1 = v2    // add v2 is obsolete when its lower than another add
             | Add v2, Remove v1 when Version.compare n.Version o.Version = Ord.Lt -> v1 = v2 // add v2 is obsolete when its lower than another remove
-            | Remove _, _ -> true // since o can be only lower or concurrent, it's always losing (add-wins)
+            | Remove v2, Remove v1 | Remove v2, Add v1 -> v1 = v2 // since o can be only lower or concurrent, it's always losing (add-wins)
             | _ -> false
     }
     

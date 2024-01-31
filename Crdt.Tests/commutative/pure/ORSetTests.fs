@@ -49,4 +49,30 @@ let tests = testSequencedGroup "pure commutative" <| testList "A pure commutativ
         Expect.equal s1 s2 "after replication both sides should have the same state"
         Expect.equal s1 (Set.ofList [1;2]) "on concurrent conflicting update, add wins"
     }
+    
+    test "What happens when a new op obsolete a remove op before it is applied" {
+        use sys = System.create "sys" <| Configuration.parse "akka.loglevel = DEBUG"
+
+        let a = spawn sys "A" <| props (ORSet.props "A")
+        let b = spawn sys "B" <| props (ORSet.props "B")
+        a <! Connect("B", b)
+        b <! Connect("A", a)
+
+        let state = ORSet.add 1 a |> wait
+        let state = ORSet.add 2 b |> wait
+
+        Thread.Sleep 500
+
+        let state = ORSet.remove 1 a |> wait
+        Expect.equal state (Set.singleton 2) "A returns set without removed value"
+        let state = ORSet.add 3 b |> wait
+        
+        Thread.Sleep 500
+        
+        let s1 = ORSet.query a |> wait
+        let s2 = ORSet.query b |> wait
+        
+        Expect.equal s1 s2 "After replication both sides should have the same state"
+        Expect.equal s1 (Set.ofList [2;3]) "On concurrent conflicting update, add wins"
+    }
 ]

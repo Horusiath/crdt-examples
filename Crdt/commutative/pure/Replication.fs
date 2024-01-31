@@ -30,10 +30,11 @@ type Event<'a> =
   override this.ToString() = sprintf "Op<%O, %s, %O, %O>" this.Value this.Origin this.Timestamp.Ticks this.Version
   interface IEquatable<Event<'a>> with member this.Equals other = this.Equals other
   interface IComparable<Event<'a>> with member this.CompareTo other = this.CompareTo other
-  interface IComparable with member this.CompareTo other =
-    match other with
-    | :? Event<'a> as t -> this.CompareTo t
-    | _ -> failwithf "cannot compare Op to other structure"
+  interface IComparable with
+    member this.CompareTo other =
+      match other with
+      | :? Event<'a> as t -> this.CompareTo t
+      | _ -> failwithf "cannot compare Op to other structure"
 
 /// Matrix clock - keeps information about all recently received versions from each replica.
 type MTime = Map<ReplicaId, VTime>
@@ -228,9 +229,14 @@ module Replicator =
         for op in actual do
           let observed = state.Observed |> MTime.update nodeId op.Version
           // check if new incoming event is not obsolete
-          let obsolete = state.Unstable |> Set.exists(fun o -> crdt.Obsoletes(o, op))
+          let obsolete = state.Unstable |> Set.exists(fun o ->
+            let obsoletes = crdt.Obsoletes(o, op)
+            if obsoletes then logDebugf ctx "%s: event %O is obsoleted by %O" state.Id op o
+            obsoletes)
           // prune unstable operations, which have been obsoleted by incoming event
           let pruned = state.Unstable |> Set.filter (fun o -> not (crdt.Obsoletes(op, o)))
+          if not (Set.isEmpty pruned) then
+            logDebugf ctx "%s: event %O have obsoleted %O" state.Id op pruned 
           state <- { state with
                        Observed = observed
                        Unstable = if obsolete then pruned else Set.add op pruned

@@ -30,9 +30,10 @@ module DotKernel =
     let add rep v (k, d) =
         let (dot, ctx) = DotContext.nextDot rep k.Context
         let kernel = { k with Entries = Map.add dot v k.Entries; Context = ctx }
-        let delta = { d with 
-            Entries = Map.add dot v d.Entries; 
-            Context = DotContext.add dot d.Context 
+        let delta =
+          { d with 
+              Entries = Map.add dot v d.Entries; 
+              Context = DotContext.add dot d.Context 
                       |> DotContext.compact }
         (kernel, delta)
 
