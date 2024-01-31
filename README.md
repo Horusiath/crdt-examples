@@ -1,3 +1,5 @@
+# CRDT Examples
+
 This repository contains an example implementation of various CRDTs. It serves
 mainly academic purposes (the implementations are meant to be simple and easy to
 understand, not optimized). If you want help or want to actually use them on
